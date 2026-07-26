@@ -350,25 +350,49 @@ app.get("/api/inventory/cumulative", requireAuth, async (req, res) => {
   try {
     const managerId = req.auth.role === "Manager" ? req.auth.userId : req.auth.managerId;
     if (!managerId) {
-      return res.json({ items: [] });
+      return res.json({ stores: [], items: [] });
     }
+
+    const [storeRows] = await pool.query(
+      "SELECT id, name, office_number AS officeNumber FROM stores WHERE manager_id = ? ORDER BY name ASC",
+      [managerId]
+    );
 
     const [rows] = await pool.query(
       `SELECT
+        s.id AS storeId,
         i.inventory_category AS inventoryCategory,
         i.item_name AS inventoryName,
-        SUM(i.quantity) AS cumulativeCount,
-        SUM(i.preferred_count) AS cumulativePreferredCount,
-        COUNT(DISTINCT i.store_id) AS storesCount
+        i.quantity AS inventoryCount,
+        i.preferred_count AS preferredCount
       FROM inventories i
       JOIN stores s ON s.id = i.store_id
       WHERE s.manager_id = ?
-      GROUP BY i.inventory_category, i.item_name
       ORDER BY i.item_name ASC`,
       [managerId]
     );
 
-    return res.json({ items: rows });
+    const itemsMap = new Map();
+
+    for (const row of rows) {
+      const key = `${row.inventoryCategory}::${row.inventoryName}`;
+      if (!itemsMap.has(key)) {
+        itemsMap.set(key, {
+          inventoryCategory: row.inventoryCategory,
+          inventoryName: row.inventoryName,
+          countsByStore: {},
+          cumulativePreferredCount: Number(row.preferredCount || 0),
+          cumulativeCount: 0
+        });
+      }
+
+      const item = itemsMap.get(key);
+      const safeCount = Number(row.inventoryCount || 0);
+      item.countsByStore[String(row.storeId)] = safeCount;
+      item.cumulativeCount += safeCount;
+    }
+
+    return res.json({ stores: storeRows, items: Array.from(itemsMap.values()) });
   } catch (error) {
     return res.status(500).json({ message: "Could not fetch cumulative inventory.", detail: error.message });
   }

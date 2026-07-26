@@ -45,6 +45,7 @@ function App() {
   const [storeView, setStoreView] = useState("detail");
   const [allInventoryCategory, setAllInventoryCategory] = useState("All");
   const [cumulativeInventory, setCumulativeInventory] = useState([]);
+  const [cumulativeStores, setCumulativeStores] = useState([]);
   const [loadingCumulativeInventory, setLoadingCumulativeInventory] = useState(false);
   const [editingInventoryKey, setEditingInventoryKey] = useState("");
   const [editInventoryForm, setEditInventoryForm] = useState({
@@ -258,6 +259,7 @@ function App() {
     setStoreView("detail");
     setAllInventoryCategory("All");
     setCumulativeInventory([]);
+    setCumulativeStores([]);
     setEditingInventoryKey("");
     setStoreInventory([]);
     setInventoryCategories([]);
@@ -358,6 +360,7 @@ function App() {
     setLoadingCumulativeInventory(true);
     try {
       const response = await api.get("/api/inventory/cumulative");
+      setCumulativeStores(response.data.stores || []);
       setCumulativeInventory(response.data.items || []);
     } catch (error) {
       setMessage(error?.response?.data?.message || "Could not fetch cumulative inventory.");
@@ -552,6 +555,36 @@ function App() {
     }
   };
 
+  const onNavigateTab = (tabKey) => {
+    if (tabKey === "overview") {
+      setShowStoreForm(false);
+    }
+
+    if (tabKey === "stores") {
+      setSelectedStore(null);
+      setStoreView("detail");
+      setStoreInventory([]);
+      setShowInventoryForm(false);
+      setStoreSearch("");
+    }
+
+    if (tabKey === "posts") {
+      setPostSelectedStoreId("");
+      setPostSelectedCategory("");
+      setPostStoreCategories([]);
+      setPostFlowStarted(false);
+      setPostInventoryItems([]);
+      setPostCurrentIndex(0);
+      setPostCountInput("0");
+    }
+
+    if (tabKey === "account") {
+      setEmployeeForm({ name: "", email: "", password: "" });
+    }
+
+    setActiveTab(tabKey);
+  };
+
   const renderOverview = () => {
     return (
       <section className="dashboard-content">
@@ -604,6 +637,8 @@ function App() {
   const renderStores = () => {
     if (selectedStore) {
       if (storeView === "all-inventory") {
+        const storeColumns = cumulativeStores.length > 0 ? cumulativeStores : stores;
+
         return (
           <section className="dashboard-content">
             <div className="section-row">
@@ -643,11 +678,11 @@ function App() {
                 <table className="inventory-table">
                   <thead>
                     <tr>
-                      <th>Category</th>
                       <th>Inventory Name</th>
-                      <th>Cumulative Count</th>
-                      <th>Preferred Count</th>
-                      <th>Stores</th>
+                      {storeColumns.map((store) => (
+                        <th key={store.id}>{store.name} #{store.officeNumber}</th>
+                      ))}
+                      <th>Cumulative</th>
                       {isManager && <th>Action</th>}
                     </tr>
                   </thead>
@@ -660,17 +695,6 @@ function App() {
                           <td>
                             {isEditing ? (
                               <input
-                                name="inventoryCategory"
-                                value={editInventoryForm.inventoryCategory}
-                                onChange={onEditInventoryFormChange}
-                              />
-                            ) : (
-                              item.inventoryCategory
-                            )}
-                          </td>
-                          <td>
-                            {isEditing ? (
-                              <input
                                 name="inventoryName"
                                 value={editInventoryForm.inventoryName}
                                 onChange={onEditInventoryFormChange}
@@ -679,20 +703,10 @@ function App() {
                               item.inventoryName
                             )}
                           </td>
-                          <td>{item.cumulativeCount}</td>
-                          <td>
-                            {isEditing ? (
-                              <input
-                                type="number"
-                                name="preferredCount"
-                                value={editInventoryForm.preferredCount}
-                                onChange={onEditInventoryFormChange}
-                              />
-                            ) : (
-                              item.cumulativePreferredCount
-                            )}
-                          </td>
-                          <td>{item.storesCount}</td>
+                          {storeColumns.map((store) => (
+                            <td key={store.id}>{item.countsByStore?.[String(store.id)] ?? 0}</td>
+                          ))}
+                          <td>{item.cumulativeCount ?? 0}</td>
                           {isManager && (
                             <td>
                               {isEditing ? (
@@ -870,8 +884,6 @@ function App() {
           </div>
 
           <article className="empty-state-card">
-            <h3>Store Detail Placeholder</h3>
-            <p>This dedicated page for the selected store is ready for the next feature set.</p>
             <p className="tiny">Phone: {selectedStore.phone}</p>
             <p className="tiny">Address: {selectedStore.address}</p>
             {isManager && (
@@ -888,6 +900,42 @@ function App() {
               </button>
             )}
           </article>
+
+          {loadingStoreInventory && <p>Loading inventory...</p>}
+
+          {!loadingStoreInventory && storeInventory.length === 0 && (
+            <article className="empty-state-card">
+              <h3>No inventory yet</h3>
+              <p>No items exist for this store yet.</p>
+            </article>
+          )}
+
+          {!loadingStoreInventory && storeInventory.length > 0 && (
+            <div className="table-wrap">
+              <table className="inventory-table">
+                <thead>
+                  <tr>
+                    <th>Category</th>
+                    <th>Inventory Name</th>
+                    <th>Inventory Count</th>
+                    <th>Preferred Count</th>
+                    <th>Last Updated</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {storeInventory.map((item) => (
+                    <tr key={item.id}>
+                      <td>{item.inventoryCategory}</td>
+                      <td>{item.inventoryName}</td>
+                      <td>{item.inventoryCount}</td>
+                      <td>{item.preferredCount}</td>
+                      <td>{item.updatedAt ? new Date(item.updatedAt).toLocaleString() : "-"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </section>
       );
     }
@@ -946,7 +994,7 @@ function App() {
                   onClick={() => {
                     setSelectedStore(store);
                     setStoreView("detail");
-                    setStoreInventory([]);
+                    void loadStoreInventory(store.id);
                     setShowInventoryForm(false);
                   }}
                 >
@@ -1283,7 +1331,7 @@ function App() {
               key={item.key}
               type="button"
               className={activeTab === item.key ? "nav-item active" : "nav-item"}
-              onClick={() => setActiveTab(item.key)}
+              onClick={() => onNavigateTab(item.key)}
             >
               <span className="icon" aria-hidden="true">
                 {item.key === "account" && (
