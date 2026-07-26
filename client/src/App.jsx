@@ -46,6 +46,7 @@ function App() {
   const [allInventoryCategory, setAllInventoryCategory] = useState("All");
   const [cumulativeInventory, setCumulativeInventory] = useState([]);
   const [cumulativeStores, setCumulativeStores] = useState([]);
+  const [selectedCumulativeStoreIds, setSelectedCumulativeStoreIds] = useState([]);
   const [loadingCumulativeInventory, setLoadingCumulativeInventory] = useState(false);
   const [editingInventoryKey, setEditingInventoryKey] = useState("");
   const [editInventoryForm, setEditInventoryForm] = useState({
@@ -260,6 +261,7 @@ function App() {
     setAllInventoryCategory("All");
     setCumulativeInventory([]);
     setCumulativeStores([]);
+    setSelectedCumulativeStoreIds([]);
     setEditingInventoryKey("");
     setStoreInventory([]);
     setInventoryCategories([]);
@@ -566,6 +568,7 @@ function App() {
       setStoreInventory([]);
       setShowInventoryForm(false);
       setStoreSearch("");
+      setSelectedCumulativeStoreIds([]);
     }
 
     if (tabKey === "posts") {
@@ -634,10 +637,32 @@ function App() {
     );
   };
 
+  const toggleCumulativeStoreSelection = (storeId) => {
+    setSelectedCumulativeStoreIds((prev) => {
+      const key = String(storeId);
+      return prev.includes(key) ? prev.filter((id) => id !== key) : [...prev, key];
+    });
+  };
+
+  const setAllCumulativeStoresSelected = (storeColumns) => {
+    setSelectedCumulativeStoreIds(storeColumns.map((store) => String(store.id)));
+  };
+
   const renderStores = () => {
     if (selectedStore) {
       if (storeView === "all-inventory") {
         const storeColumns = cumulativeStores.length > 0 ? cumulativeStores : stores;
+        const selectedSet = new Set(selectedCumulativeStoreIds);
+        const candidateVisibleStoreColumns =
+          selectedCumulativeStoreIds.length === 0
+            ? storeColumns
+            : storeColumns.filter((store) => selectedSet.has(String(store.id)));
+        const visibleStoreColumns =
+          candidateVisibleStoreColumns.length > 0 ? candidateVisibleStoreColumns : storeColumns;
+        const selectedStoresLabel =
+          visibleStoreColumns.length === storeColumns.length
+            ? "All stores selected"
+            : `${visibleStoreColumns.length} store(s) selected`;
 
         return (
           <section className="dashboard-content">
@@ -650,6 +675,46 @@ function App() {
                 Back to Store
               </button>
             </div>
+
+            <details className="store-filter-dropdown">
+              <summary>{selectedStoresLabel}</summary>
+              <div className="store-filter-panel">
+                <div className="table-actions">
+                  <button
+                    type="button"
+                    className="action-btn"
+                    onClick={() => setAllCumulativeStoresSelected(storeColumns)}
+                  >
+                    Select All
+                  </button>
+                  <button
+                    type="button"
+                    className="signout-btn"
+                    onClick={() => setSelectedCumulativeStoreIds([])}
+                  >
+                    Show All
+                  </button>
+                </div>
+
+                <div className="store-filter-list">
+                  {storeColumns.map((store) => {
+                    const checked =
+                      selectedCumulativeStoreIds.length === 0 ||
+                      selectedCumulativeStoreIds.includes(String(store.id));
+                    return (
+                      <label key={store.id} className="store-filter-option">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => toggleCumulativeStoreSelection(store.id)}
+                        />
+                        <span>{store.name} #{store.officeNumber}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            </details>
 
             <div className="category-tabs" role="tablist" aria-label="Inventory categories">
               {allInventoryCategories.map((category) => (
@@ -679,7 +744,7 @@ function App() {
                   <thead>
                     <tr>
                       <th>Inventory Name</th>
-                      {storeColumns.map((store) => (
+                      {visibleStoreColumns.map((store) => (
                         <th key={store.id}>{store.name} #{store.officeNumber}</th>
                       ))}
                       <th>Cumulative</th>
@@ -703,10 +768,16 @@ function App() {
                               item.inventoryName
                             )}
                           </td>
-                          {storeColumns.map((store) => (
-                            <td key={store.id}>{item.countsByStore?.[String(store.id)] ?? 0}</td>
-                          ))}
-                          <td>{item.cumulativeCount ?? 0}</td>
+                          {visibleStoreColumns.map((store) => {
+                            const count = Number(item.countsByStore?.[String(store.id)] ?? 0);
+                            return <td key={store.id}>{count}</td>;
+                          })}
+                          <td>
+                            {visibleStoreColumns.reduce(
+                              (sum, store) => sum + Number(item.countsByStore?.[String(store.id)] ?? 0),
+                              0
+                            )}
+                          </td>
                           {isManager && (
                             <td>
                               {isEditing ? (

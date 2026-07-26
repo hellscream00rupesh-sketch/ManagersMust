@@ -348,6 +348,38 @@ select:focus {
   padding-bottom: 0.25rem;
 }
 
+.store-filter-dropdown {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #101010;
+}
+
+.store-filter-dropdown summary {
+  cursor: pointer;
+  color: #ffd6b0;
+  padding: 0.62rem 0.78rem;
+  font-size: 0.9rem;
+}
+
+.store-filter-panel {
+  border-top: 1px solid var(--line);
+  padding: 0.7rem;
+  display: grid;
+  gap: 0.6rem;
+}
+
+.store-filter-list {
+  display: grid;
+  gap: 0.42rem;
+}
+
+.store-filter-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--muted);
+}
+
 .category-tab {
   border: 1px solid var(--line);
   border-radius: 999px;

@@ -363,11 +363,12 @@ app.get("/api/inventory/cumulative", requireAuth, async (req, res) => {
         s.id AS storeId,
         i.inventory_category AS inventoryCategory,
         i.item_name AS inventoryName,
-        i.quantity AS inventoryCount,
-        i.preferred_count AS preferredCount
+        SUM(i.quantity) AS inventoryCount,
+        MAX(i.preferred_count) AS preferredCount
       FROM inventories i
       JOIN stores s ON s.id = i.store_id
       WHERE s.manager_id = ?
+      GROUP BY s.id, i.inventory_category, i.item_name
       ORDER BY i.item_name ASC`,
       [managerId]
     );
