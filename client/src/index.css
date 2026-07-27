@@ -1,8 +1,22 @@
+@import url("https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,600;9..144,700&display=swap");
+
 html,
 body,
 #root {
   margin: 0;
   min-height: 100%;
   width: 100%;
-  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  font-family: "Manrope", "Trebuchet MS", sans-serif;
+}
+
+body {
+  color: #2d241a;
+  background: #f6f3ed;
+}
+
+h1,
+h3 {
+  font-family: "Fraunces", Georgia, serif;
+  font-weight: 700;
+  letter-spacing: 0.01em;
 }

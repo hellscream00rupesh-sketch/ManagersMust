@@ -308,13 +308,43 @@ app.get("/api/inventory-categories", requireAuth, async (req, res) => {
 });
 
 app.get("/api/inventory/posts", requireAuth, async (req, res) => {
+  const includeAll = String(req.query.all || "").toLowerCase() === "true";
   const requestedLimit = Number(req.query.limit || 80);
   const safeLimit = Number.isInteger(requestedLimit) ? Math.min(Math.max(requestedLimit, 1), 150) : 80;
+  const startDate = typeof req.query.startDate === "string" ? req.query.startDate.trim() : "";
+  const endDate = typeof req.query.endDate === "string" ? req.query.endDate.trim() : "";
+  const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+
+  if (startDate && !datePattern.test(startDate)) {
+    return res.status(400).json({ message: "Invalid startDate. Expected format YYYY-MM-DD." });
+  }
+
+  if (endDate && !datePattern.test(endDate)) {
+    return res.status(400).json({ message: "Invalid endDate. Expected format YYYY-MM-DD." });
+  }
 
   try {
     const managerId = req.auth.role === "Manager" ? req.auth.userId : req.auth.managerId;
     if (!managerId) {
       return res.json({ posts: [] });
+    }
+
+    const whereClauses = ["s.manager_id = ?"];
+    const values = [managerId];
+
+    if (startDate) {
+      whereClauses.push("p.created_at >= ?");
+      values.push(`${startDate} 00:00:00`);
+    }
+
+    if (endDate) {
+      whereClauses.push("p.created_at <= ?");
+      values.push(`${endDate} 23:59:59`);
+    }
+
+    const limitClause = includeAll ? "" : "LIMIT ?";
+    if (!includeAll) {
+      values.push(safeLimit);
     }
 
     const [rows] = await pool.query(
@@ -334,10 +364,10 @@ app.get("/api/inventory/posts", requireAuth, async (req, res) => {
        FROM inventory_posts p
        JOIN stores s ON s.id = p.store_id
        JOIN users u ON u.id = p.posted_by_user_id
-       WHERE s.manager_id = ?
+       WHERE ${whereClauses.join(" AND ")}
        ORDER BY p.created_at DESC, p.id DESC
-       LIMIT ?`,
-      [managerId, safeLimit]
+       ${limitClause}`,
+      values
     );
 
     return res.json({ posts: rows });
@@ -510,8 +540,20 @@ app.get("/api/stores/:storeId/inventory/categories", requireAuth, async (req, re
 
 app.get("/api/stores/:storeId/inventory/posts", requireAuth, async (req, res) => {
   const storeId = Number(req.params.storeId);
+  const includeAll = String(req.query.all || "").toLowerCase() === "true";
   const requestedLimit = Number(req.query.limit || 50);
   const safeLimit = Number.isInteger(requestedLimit) ? Math.min(Math.max(requestedLimit, 1), 100) : 50;
+  const startDate = typeof req.query.startDate === "string" ? req.query.startDate.trim() : "";
+  const endDate = typeof req.query.endDate === "string" ? req.query.endDate.trim() : "";
+  const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+
+  if (startDate && !datePattern.test(startDate)) {
+    return res.status(400).json({ message: "Invalid startDate. Expected format YYYY-MM-DD." });
+  }
+
+  if (endDate && !datePattern.test(endDate)) {
+    return res.status(400).json({ message: "Invalid endDate. Expected format YYYY-MM-DD." });
+  }
 
   if (!Number.isInteger(storeId) || storeId <= 0) {
     return res.status(400).json({ message: "Invalid store id." });
@@ -521,6 +563,24 @@ app.get("/api/stores/:storeId/inventory/posts", requireAuth, async (req, res) =>
     const store = await getStoreForUser(req.auth, storeId);
     if (!store) {
       return res.status(404).json({ message: "Store not found or not accessible." });
+    }
+
+    const whereClauses = ["p.store_id = ?"];
+    const values = [storeId];
+
+    if (startDate) {
+      whereClauses.push("p.created_at >= ?");
+      values.push(`${startDate} 00:00:00`);
+    }
+
+    if (endDate) {
+      whereClauses.push("p.created_at <= ?");
+      values.push(`${endDate} 23:59:59`);
+    }
+
+    const limitClause = includeAll ? "" : "LIMIT ?";
+    if (!includeAll) {
+      values.push(safeLimit);
     }
 
     const [rows] = await pool.query(
@@ -537,10 +597,10 @@ app.get("/api/stores/:storeId/inventory/posts", requireAuth, async (req, res) =>
          u.email AS postedByEmail
        FROM inventory_posts p
        JOIN users u ON u.id = p.posted_by_user_id
-       WHERE p.store_id = ?
+       WHERE ${whereClauses.join(" AND ")}
        ORDER BY p.created_at DESC, p.id DESC
-       LIMIT ?`,
-      [storeId, safeLimit]
+       ${limitClause}`,
+      values
     );
 
     return res.json({ store, posts: rows });
