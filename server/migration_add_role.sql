@@ -1,2 +1,2 @@
 ALTER TABLE users
-ADD COLUMN role ENUM('Employee', 'Manager') NOT NULL DEFAULT 'Employee';
+MODIFY COLUMN role ENUM('Employee', 'Active Manager', 'Manager') NOT NULL DEFAULT 'Employee';

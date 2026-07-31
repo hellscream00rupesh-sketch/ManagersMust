@@ -5,7 +5,9 @@
   "main": "src/server.js",
   "scripts": {
     "dev": "node src/server.js",
-    "start": "node src/server.js"
+    "start": "node src/server.js",
+    "migrate:role": "node scripts/migrate-role.js",
+    "migrate:main-store": "node scripts/migrate-main-store.js"
   },
   "keywords": [],
   "author": "",

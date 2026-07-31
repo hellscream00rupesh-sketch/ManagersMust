@@ -51,6 +51,26 @@ function UIIcon({ name, className = "" }) {
   );
 }
 
+function LoadingIndicator({ label = "Loading...", inline = false, compact = false }) {
+  const className = [
+    "loading-indicator",
+    inline ? "inline" : "",
+    compact ? "compact" : ""
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  return (
+    <div className={className} role="status" aria-live="polite">
+      <span className="loading-core" aria-hidden="true">
+        <span className="loading-ring" />
+        <span className="loading-dot" />
+      </span>
+      <span className="loading-label">{label}</span>
+    </div>
+  );
+}
+
 function getInitialUser() {
   const raw = localStorage.getItem(userKey);
   if (!raw) {
@@ -140,9 +160,21 @@ function App() {
     email: "",
     password: ""
   });
+  const [employeeRoleDrafts, setEmployeeRoleDrafts] = useState({});
+  const [updatingEmployeeRoleId, setUpdatingEmployeeRoleId] = useState(null);
+  const [mainStoreDraftId, setMainStoreDraftId] = useState("");
+  const [savingMainStore, setSavingMainStore] = useState(false);
+  const [didApplyMainStoreDefaults, setDidApplyMainStoreDefaults] = useState(false);
+  const [passwordForm, setPasswordForm] = useState({
+    currentPassword: "",
+    newPassword: "",
+    confirmPassword: ""
+  });
+  const [changingPassword, setChangingPassword] = useState(false);
 
   const isAuthenticated = Boolean(token && currentUser);
   const isManager = currentUser?.role === "Manager";
+  const canManageWorkspace = currentUser?.role === "Manager" || currentUser?.role === "Active Manager";
 
   const tabHeading = useMemo(() => {
     const item = navItems.find((entry) => entry.key === activeTab);
@@ -163,6 +195,16 @@ function App() {
       return searchable.includes(query);
     });
   }, [storeSearch, stores]);
+
+  const preferredMainStoreId = useMemo(() => {
+    const selected = currentUser?.mainStoreId;
+    if (!selected) {
+      return "";
+    }
+
+    const exists = stores.some((store) => String(store.id) === String(selected));
+    return exists ? String(selected) : "";
+  }, [currentUser?.mainStoreId, stores]);
 
   const allInventoryCategories = useMemo(() => {
     const set = new Set(cumulativeInventory.map((item) => item.inventoryCategory).filter(Boolean));
@@ -445,12 +487,23 @@ function App() {
   }, [isAuthenticated, activeTab]);
 
   useEffect(() => {
-    if (!isAuthenticated || activeTab !== "account" || !isManager) {
+    if (!isAuthenticated || activeTab !== "account" || !canManageWorkspace) {
       return;
     }
 
     void loadEmployees();
-  }, [isAuthenticated, activeTab, isManager]);
+  }, [isAuthenticated, activeTab, canManageWorkspace]);
+
+  useEffect(() => {
+    if (!isAuthenticated || activeTab !== "account") {
+      return;
+    }
+
+    if (stores.length === 0 && !loadingStores) {
+      void loadStores();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated, activeTab, stores.length, loadingStores]);
 
   useEffect(() => {
     if (!isAuthenticated || activeTab !== "posts") {
@@ -469,10 +522,41 @@ function App() {
     void Promise.all([
       loadCumulativeInventory(),
       loadPostFeed(""),
-      isManager ? loadEmployees() : Promise.resolve()
+      canManageWorkspace ? loadEmployees() : Promise.resolve()
     ]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAuthenticated, activeTab, isManager]);
+  }, [isAuthenticated, activeTab, canManageWorkspace]);
+
+  useEffect(() => {
+    if (employees.length === 0) {
+      setEmployeeRoleDrafts({});
+      return;
+    }
+
+    const drafts = {};
+    employees.forEach((employee) => {
+      drafts[String(employee.id)] = employee.role;
+    });
+    setEmployeeRoleDrafts(drafts);
+  }, [employees]);
+
+  useEffect(() => {
+    setMainStoreDraftId(preferredMainStoreId);
+  }, [preferredMainStoreId, currentUser?.id]);
+
+  useEffect(() => {
+    if (!isAuthenticated || didApplyMainStoreDefaults || stores.length === 0) {
+      return;
+    }
+
+    if (preferredMainStoreId) {
+      setOverviewSelectedStoreId(preferredMainStoreId);
+      setSelectedCumulativeStoreIds([preferredMainStoreId]);
+      setDailyPostStoreId(preferredMainStoreId);
+    }
+
+    setDidApplyMainStoreDefaults(true);
+  }, [isAuthenticated, didApplyMainStoreDefaults, stores.length, preferredMainStoreId]);
 
   useEffect(() => {
     if (overviewSelectedStoreId === "all") {
@@ -515,6 +599,11 @@ function App() {
   const onEmployeeFormChange = (event) => {
     const { name, value } = event.target;
     setEmployeeForm((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const onPasswordFormChange = (event) => {
+    const { name, value } = event.target;
+    setPasswordForm((prev) => ({ ...prev, [name]: value }));
   };
 
   const onAuthSubmit = async (event) => {
@@ -592,6 +681,13 @@ function App() {
     setPostFeedDateFrom("");
     setPostFeedDateTo("");
     setEmployees([]);
+    setEmployeeRoleDrafts({});
+    setUpdatingEmployeeRoleId(null);
+    setMainStoreDraftId("");
+    setSavingMainStore(false);
+    setDidApplyMainStoreDefaults(false);
+    setPasswordForm({ currentPassword: "", newPassword: "", confirmPassword: "" });
+    setChangingPassword(false);
     setActiveTab("overview");
     if (showMessage) {
       setMessage("Signed out successfully.");
@@ -648,6 +744,133 @@ function App() {
       setMessage(response.data.message);
     } catch (error) {
       setMessage(error?.response?.data?.message || "Could not add employee.");
+    }
+  };
+
+  const onEmployeeRoleDraftChange = (employeeId, role) => {
+    setEmployeeRoleDrafts((prev) => ({
+      ...prev,
+      [String(employeeId)]: role
+    }));
+  };
+
+  const onUpdateEmployeeRole = async (employee) => {
+    const employeeId = String(employee.id);
+    const targetRole = employeeRoleDrafts[employeeId] || employee.role;
+
+    if (targetRole === employee.role) {
+      setMessage("Select a different role to update.");
+      return;
+    }
+
+    setUpdatingEmployeeRoleId(employee.id);
+    try {
+      const response = await api.patch(`/api/employees/${employee.id}/role`, {
+        role: targetRole
+      });
+
+      const updatedEmployee = response?.data?.employee;
+      if (updatedEmployee) {
+        setEmployees((prev) => prev.map((entry) => (entry.id === updatedEmployee.id ? updatedEmployee : entry)));
+      }
+
+      setMessage(response?.data?.message || "Employee role updated.");
+    } catch (error) {
+      setMessage(error?.response?.data?.message || "Could not update employee role.");
+    } finally {
+      setUpdatingEmployeeRoleId(null);
+    }
+  };
+
+  const onSaveMainStore = async () => {
+    setMessage("");
+    setSavingMainStore(true);
+
+    try {
+      const payload = {
+        mainStoreId: mainStoreDraftId ? Number(mainStoreDraftId) : null
+      };
+
+      const response = await api.patch("/api/me/main-store", payload);
+      const updatedUser = response?.data?.user;
+
+      if (updatedUser) {
+        setCurrentUser(updatedUser);
+        localStorage.setItem(userKey, JSON.stringify(updatedUser));
+
+        const nextPreferredStoreId = updatedUser.mainStoreId ? String(updatedUser.mainStoreId) : "";
+        setMainStoreDraftId(nextPreferredStoreId);
+        setDidApplyMainStoreDefaults(false);
+
+        if (nextPreferredStoreId) {
+          setOverviewSelectedStoreId(nextPreferredStoreId);
+          setSelectedCumulativeStoreIds([nextPreferredStoreId]);
+          setDailyPostStoreId(nextPreferredStoreId);
+        } else {
+          setOverviewSelectedStoreId("all");
+          setSelectedCumulativeStoreIds([]);
+          setDailyPostStoreId("");
+        }
+      }
+
+      setMessage(response?.data?.message || "Main store updated.");
+    } catch (error) {
+      setMessage(error?.response?.data?.message || "Could not update main store.");
+    } finally {
+      setSavingMainStore(false);
+    }
+  };
+
+  const onChangePassword = async (event) => {
+    event.preventDefault();
+    setMessage("");
+
+    if (!passwordForm.currentPassword || !passwordForm.newPassword || !passwordForm.confirmPassword) {
+      setMessage("All password fields are required.");
+      return;
+    }
+
+    if (passwordForm.newPassword.length < 6) {
+      setMessage("New password must be at least 6 characters.");
+      return;
+    }
+
+    if (passwordForm.newPassword !== passwordForm.confirmPassword) {
+      setMessage("New password and confirm password do not match.");
+      return;
+    }
+
+    if (passwordForm.currentPassword === passwordForm.newPassword) {
+      setMessage("New password must be different from current password.");
+      return;
+    }
+
+    setChangingPassword(true);
+    try {
+      const response = await api.patch("/api/me/password", {
+        currentPassword: passwordForm.currentPassword,
+        newPassword: passwordForm.newPassword
+      });
+
+      setPasswordForm({ currentPassword: "", newPassword: "", confirmPassword: "" });
+      setMessage(response.data.message || "Password changed successfully.");
+    } catch (error) {
+      const status = error?.response?.status;
+      const payload = error?.response?.data;
+
+      if (status === 404) {
+        setMessage("Password endpoint not found. Restart the server and try again.");
+      } else if (typeof payload === "string" && payload.trim()) {
+        setMessage(payload.slice(0, 160));
+      } else if (payload?.message) {
+        setMessage(payload.message);
+      } else if (error?.message) {
+        setMessage(`Could not change password: ${error.message}`);
+      } else {
+        setMessage("Could not change password.");
+      }
+    } finally {
+      setChangingPassword(false);
     }
   };
 
@@ -747,9 +970,14 @@ function App() {
     setSubmittingDailyPost(false);
   };
 
-  const onOpenDailyPostModal = () => {
+  const onOpenDailyPostModal = async () => {
     resetDailyPostComposer();
     setShowDailyPostModal(true);
+
+    if (preferredMainStoreId) {
+      setDailyPostStoreId(preferredMainStoreId);
+      await loadDailyPostCategories(preferredMainStoreId);
+    }
   };
 
   const onCloseDailyPostModal = () => {
@@ -978,6 +1206,10 @@ function App() {
 
     if (tabKey === "account") {
       setEmployeeForm({ name: "", email: "", password: "" });
+      setEmployeeRoleDrafts({});
+      setUpdatingEmployeeRoleId(null);
+      setMainStoreDraftId(preferredMainStoreId);
+      setPasswordForm({ currentPassword: "", newPassword: "", confirmPassword: "" });
     }
 
     setActiveTab(tabKey);
@@ -989,7 +1221,7 @@ function App() {
         ? "All stores"
         : stores.find((store) => String(store.id) === String(overviewSelectedStoreId))?.name || "Selected store";
 
-    const roleLabel = isManager ? "Manager" : "Employee";
+    const roleLabel = currentUser?.role || "Employee";
 
     return (
       <section className="dashboard-content">
@@ -1087,7 +1319,7 @@ function App() {
               </div>
             </div>
 
-            {loadingCumulativeInventory && <p>Loading inventory analytics...</p>}
+            {loadingCumulativeInventory && <LoadingIndicator label="Loading inventory analytics..." />}
 
             {!loadingCumulativeInventory && overviewInventoryRows.length === 0 && (
               <article className="empty-state-card">
@@ -1236,7 +1468,7 @@ function App() {
               </div>
             </div>
 
-            {loadingPostFeed && <p>Loading recent activity...</p>}
+            {loadingPostFeed && <LoadingIndicator label="Loading recent activity..." />}
 
             {!loadingPostFeed && overviewActivityRows.length === 0 && (
               <article className="empty-state-card">
@@ -1311,7 +1543,7 @@ function App() {
             </form>
           )}
 
-          {isManager && (
+          {canManageWorkspace && (
             <p className="tiny">Team members: {employees.length} {employees.length === 1 ? "employee" : "employees"}</p>
           )}
         </section>
@@ -1411,7 +1643,7 @@ function App() {
               ))}
             </div>
 
-            {loadingCumulativeInventory && <p>Loading inventory...</p>}
+            {loadingCumulativeInventory && <LoadingIndicator label="Loading inventory..." />}
 
             {!loadingCumulativeInventory && filteredCumulativeInventory.length === 0 && (
               <article className="empty-state-card">
@@ -1430,7 +1662,7 @@ function App() {
                         <th key={store.id}>{store.name} #{store.officeNumber}</th>
                       ))}
                       <th>Cumulative</th>
-                      {isManager && <th>Action</th>}
+                      {canManageWorkspace && <th>Action</th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -1457,7 +1689,7 @@ function App() {
                           <td>
                             {Number(item.cumulativeCount || 0)}
                           </td>
-                          {isManager && (
+                          {canManageWorkspace && (
                             <td>
                               {isEditing ? (
                                 <div className="table-actions">
@@ -1501,12 +1733,19 @@ function App() {
 
             <div className="section-row">
               <p className="section-sub">Need global visibility? Open cumulative All Inventory view.</p>
-              <button type="button" className="action-btn" onClick={() => setStoreView("all-inventory")}>
+              <button
+                type="button"
+                className="action-btn"
+                onClick={() => {
+                  setStoreView("all-inventory");
+                  setSelectedCumulativeStoreIds(preferredMainStoreId ? [preferredMainStoreId] : []);
+                }}
+              >
                 All Inventory
               </button>
             </div>
 
-            {isManager && (
+            {canManageWorkspace && (
               <div className="section-row">
                 <p className="section-sub">Manage inventory items for this store.</p>
                 <button
@@ -1519,7 +1758,7 @@ function App() {
               </div>
             )}
 
-            {isManager && showInventoryForm && (
+            {canManageWorkspace && showInventoryForm && (
               <form className="grid-form" onSubmit={onAddInventory}>
                 <label>
                   Inventory Category
@@ -1535,7 +1774,7 @@ function App() {
                     ))}
                     <option value={addCategoryValue}>+ Add new category</option>
                   </select>
-                  {loadingInventoryCategories && <span className="tiny">Loading categories...</span>}
+                  {loadingInventoryCategories && <LoadingIndicator label="Loading categories..." inline compact />}
                 </label>
                 {inventoryForm.inventoryCategory === addCategoryValue && (
                   <label>
@@ -1589,7 +1828,7 @@ function App() {
               </form>
             )}
 
-            {loadingStoreInventory && <p>Loading inventory...</p>}
+            {loadingStoreInventory && <LoadingIndicator label="Loading inventory..." />}
 
             {!loadingStoreInventory && storeInventory.length === 0 && (
               <article className="empty-state-card">
@@ -1624,7 +1863,14 @@ function App() {
               <p className="section-sub">Office #{selectedStore.officeNumber}</p>
             </div>
             <div className="table-actions">
-              <button type="button" className="action-btn" onClick={() => setStoreView("all-inventory")}>
+              <button
+                type="button"
+                className="action-btn"
+                onClick={() => {
+                  setStoreView("all-inventory");
+                  setSelectedCumulativeStoreIds(preferredMainStoreId ? [preferredMainStoreId] : []);
+                }}
+              >
                 All Inventory
               </button>
               <button type="button" className="signout-btn" onClick={() => setSelectedStore(null)}>
@@ -1636,7 +1882,7 @@ function App() {
           <article className="empty-state-card">
             <p className="tiny">Phone: {selectedStore.phone}</p>
             <p className="tiny">Address: {selectedStore.address}</p>
-            {isManager && (
+            {canManageWorkspace && (
               <button
                 type="button"
                 className="action-btn"
@@ -1654,7 +1900,7 @@ function App() {
             )}
           </article>
 
-          {loadingStoreInventory && <p>Loading inventory...</p>}
+          {loadingStoreInventory && <LoadingIndicator label="Loading inventory..." />}
 
           {!loadingStoreInventory && storeInventory.length === 0 && (
             <article className="empty-state-card">
@@ -1765,6 +2011,7 @@ function App() {
               if (stores.length > 0) {
                 setSelectedStore(stores[0]);
                 setStoreView("all-inventory");
+                setSelectedCumulativeStoreIds(preferredMainStoreId ? [preferredMainStoreId] : []);
               }
             }}
             disabled={stores.length === 0}
@@ -1784,7 +2031,7 @@ function App() {
           />
         </label>
 
-        {loadingStores && <p>Loading stores...</p>}
+        {loadingStores && <LoadingIndicator label="Loading stores..." />}
 
         {!loadingStores && filteredStores.length === 0 && (
           <article className="empty-state-card">
@@ -1829,56 +2076,180 @@ function App() {
   const renderAccount = () => {
     return (
       <section className="dashboard-content">
-        <div>
+        <div className="section-block">
           <p className="section-title icon-text"><UIIcon name="account" />Account Details</p>
           <p className="section-sub">{currentUser?.name} ({currentUser?.role})</p>
+          <p className="tiny icon-text"><UIIcon name="mail" />{currentUser?.email}</p>
         </div>
 
-        {isManager && (
-          <>
-            <div className="section-row">
-              <div>
-                <p className="section-title icon-text"><UIIcon name="team" />Add Employees</p>
-                <p className="section-sub">Create team members.</p>
-              </div>
+        <div className="section-block">
+          <div className="section-row">
+            <div>
+              <p className="section-title icon-text"><UIIcon name="building" />Main Store</p>
+              <p className="section-sub">Choose your default store for Overview, Posts, and All Inventory.</p>
             </div>
+          </div>
 
-            <form className="grid-form" onSubmit={onAddEmployee}>
-              <label>
-                Employee name
-                <input name="name" value={employeeForm.name} onChange={onEmployeeFormChange} required />
-              </label>
-              <label>
-                Employee email
-                <input type="email" name="email" value={employeeForm.email} onChange={onEmployeeFormChange} required />
-              </label>
-              <label>
-                Temporary password
-                <input type="password" name="password" value={employeeForm.password} onChange={onEmployeeFormChange} minLength={6} required />
-              </label>
-              <button type="submit" className="submit-btn">Add Employee</button>
-            </form>
+          {stores.length === 0 && !loadingStores && (
+            <p className="section-sub">No stores are available for your account yet.</p>
+          )}
 
-            <p className="section-title icon-text"><UIIcon name="team" />Your Employees</p>
-            {loadingEmployees && <p>Loading employees...</p>}
-            {!loadingEmployees && employees.length === 0 && <p>No employees added yet.</p>}
-            {!loadingEmployees && employees.length > 0 && (
-              <ul className="data-list">
-                {employees.map((employee) => (
-                  <li key={employee.id} className="data-item">
-                    <div className="item-head">
-                      <strong>{employee.name}</strong>
-                      <span>{employee.role}</span>
-                    </div>
-                    <p>{employee.email}</p>
-                  </li>
-                ))}
-              </ul>
-            )}
+          {loadingStores && <LoadingIndicator label="Loading stores..." />}
+
+          {stores.length > 0 && (
+            <div className="role-edit-row">
+              <label>
+                Preferred store
+                <select
+                  value={mainStoreDraftId}
+                  onChange={(event) => setMainStoreDraftId(event.target.value)}
+                  disabled={savingMainStore}
+                >
+                  <option value="">All stores (no default)</option>
+                  {stores.map((store) => (
+                    <option key={store.id} value={store.id}>
+                      {store.name} #{store.officeNumber}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <button
+                type="button"
+                className="action-btn"
+                onClick={onSaveMainStore}
+                disabled={savingMainStore || mainStoreDraftId === preferredMainStoreId}
+              >
+                {savingMainStore ? "Saving..." : "Save Main Store"}
+              </button>
+            </div>
+          )}
+        </div>
+
+        <div className="section-block">
+          <div className="section-row">
+            <div>
+              <p className="section-title icon-text"><UIIcon name="lock" />Change Password</p>
+              <p className="section-sub">Update your account password.</p>
+            </div>
+          </div>
+
+          <form className="grid-form" onSubmit={onChangePassword}>
+            <label>
+              Current password
+              <input
+                type="password"
+                name="currentPassword"
+                value={passwordForm.currentPassword}
+                onChange={onPasswordFormChange}
+                minLength={6}
+                required
+              />
+            </label>
+            <label>
+              New password
+              <input
+                type="password"
+                name="newPassword"
+                value={passwordForm.newPassword}
+                onChange={onPasswordFormChange}
+                minLength={6}
+                required
+              />
+            </label>
+            <label>
+              Confirm new password
+              <input
+                type="password"
+                name="confirmPassword"
+                value={passwordForm.confirmPassword}
+                onChange={onPasswordFormChange}
+                minLength={6}
+                required
+              />
+            </label>
+            <button type="submit" className="submit-btn" disabled={changingPassword}>
+              {changingPassword ? "Updating..." : "Change Password"}
+            </button>
+          </form>
+        </div>
+
+        {canManageWorkspace && (
+          <>
+            <div className="section-block">
+              <div className="section-row">
+                <div>
+                  <p className="section-title icon-text"><UIIcon name="team" />Add Employees</p>
+                  <p className="section-sub">Create team members.</p>
+                </div>
+              </div>
+
+              <form className="grid-form" onSubmit={onAddEmployee}>
+                <label>
+                  Employee name
+                  <input name="name" value={employeeForm.name} onChange={onEmployeeFormChange} required />
+                </label>
+                <label>
+                  Employee email
+                  <input type="email" name="email" value={employeeForm.email} onChange={onEmployeeFormChange} required />
+                </label>
+                <label>
+                  Temporary password
+                  <input type="password" name="password" value={employeeForm.password} onChange={onEmployeeFormChange} minLength={6} required />
+                </label>
+                <button type="submit" className="submit-btn">Add Employee</button>
+              </form>
+
+              <p className="section-title icon-text"><UIIcon name="team" />Your Employees</p>
+              {loadingEmployees && <LoadingIndicator label="Loading employees..." />}
+              {!loadingEmployees && employees.length === 0 && <p>No employees added yet.</p>}
+              {!loadingEmployees && employees.length > 0 && (
+                <ul className="data-list">
+                  {employees.map((employee) => {
+                    const draftRole = employeeRoleDrafts[String(employee.id)] || employee.role;
+                    const isUpdatingRole = Number(updatingEmployeeRoleId) === Number(employee.id);
+                    const canSubmitRole = draftRole !== employee.role;
+
+                    return (
+                      <li key={employee.id} className="data-item">
+                        <div className="item-head">
+                          <strong>{employee.name}</strong>
+                          <span>{employee.role}</span>
+                        </div>
+                        <p>{employee.email}</p>
+
+                        {isManager && (
+                          <div className="role-edit-row">
+                            <label>
+                              Role
+                              <select
+                                value={draftRole}
+                                onChange={(event) => onEmployeeRoleDraftChange(employee.id, event.target.value)}
+                              >
+                                <option value="Employee">Employee</option>
+                                <option value="Active Manager">Active Manager</option>
+                              </select>
+                            </label>
+                            <button
+                              type="button"
+                              className="action-btn"
+                              onClick={() => onUpdateEmployeeRole(employee)}
+                              disabled={!canSubmitRole || isUpdatingRole}
+                            >
+                              {isUpdatingRole ? "Updating..." : "Update Role"}
+                            </button>
+                          </div>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
           </>
         )}
 
-        {!isManager && (
+        {!canManageWorkspace && (
           <p className="section-sub">Employee accounts are managed by your manager.</p>
         )}
       </section>
@@ -1981,7 +2352,7 @@ function App() {
             </button>
           </div>
 
-          {loadingPostFeed && <p>Loading feed...</p>}
+          {loadingPostFeed && <LoadingIndicator label="Loading feed..." />}
 
           {!loadingPostFeed && filteredPostFeed.length === 0 && (
             <article className="empty-state-card">
@@ -2058,7 +2429,7 @@ function App() {
                         <option key={category.name} value={category.name}>{category.name}</option>
                       ))}
                     </select>
-                    {loadingDailyPostCategories && <span className="tiny">Loading categories...</span>}
+                    {loadingDailyPostCategories && <LoadingIndicator label="Loading categories..." inline compact />}
                   </label>
                 </div>
 
@@ -2227,6 +2598,12 @@ function App() {
               )}
             </div>
           </header>
+
+          {message && (
+            <div className="dashboard-status" role="status" aria-live="polite">
+              {message}
+            </div>
+          )}
 
           {renderTab()}
         </section>

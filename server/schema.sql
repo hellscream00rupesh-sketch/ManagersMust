@@ -3,8 +3,9 @@ CREATE TABLE IF NOT EXISTS users (
   name VARCHAR(120) NOT NULL,
   email VARCHAR(190) NOT NULL UNIQUE,
   password_hash VARCHAR(255) NOT NULL,
-  role ENUM('Employee', 'Manager') NOT NULL DEFAULT 'Employee',
+  role ENUM('Employee', 'Active Manager', 'Manager') NOT NULL DEFAULT 'Employee',
   manager_id BIGINT NULL,
+  main_store_id BIGINT NULL,
   CONSTRAINT fk_users_manager FOREIGN KEY (manager_id) REFERENCES users(id) ON DELETE SET NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

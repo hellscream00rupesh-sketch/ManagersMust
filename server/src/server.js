@@ -9,7 +9,8 @@ const pool = require("./db");
 const app = express();
 const port = Number(process.env.PORT || 4000);
 const corsOrigin = process.env.CORS_ORIGIN || "http://localhost:5173";
-const validRoles = new Set(["Employee", "Manager"]);
+const validRoles = new Set(["Employee", "Active Manager", "Manager"]);
+const elevatedRoles = new Set(["Active Manager", "Manager"]);
 
 const requiredEnv = ["DB_HOST", "DB_USER", "DB_PASSWORD", "DB_NAME", "JWT_SECRET"];
 const missingEnv = requiredEnv.filter((key) => !process.env[key]);
@@ -33,7 +34,8 @@ function toPublicUser(user) {
     name: user.name,
     email: user.email,
     role: user.role,
-    managerId: user.manager_id || null
+    managerId: user.manager_id || null,
+    mainStoreId: user.main_store_id || null
   };
 }
 
@@ -43,14 +45,27 @@ function issueToken(user) {
       userId: user.id,
       email: user.email,
       role: user.role,
-      managerId: user.manager_id || null
+      managerId: user.manager_id || null,
+      mainStoreId: user.main_store_id || null
     },
     process.env.JWT_SECRET,
     { expiresIn: "7d" }
   );
 }
 
-function requireAuth(req, res, next) {
+function getManagerScopeId(user) {
+  if (user.role === "Manager") {
+    return user.userId;
+  }
+
+  if (user.role === "Active Manager" || user.role === "Employee") {
+    return user.managerId || null;
+  }
+
+  return null;
+}
+
+async function requireAuth(req, res, next) {
   const authHeader = req.headers.authorization || "";
   const [scheme, token] = authHeader.split(" ");
 
@@ -59,7 +74,26 @@ function requireAuth(req, res, next) {
   }
 
   try {
-    req.auth = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const [rows] = await pool.query("SELECT id, email, role, manager_id, main_store_id FROM users WHERE id = ?", [decoded.userId]);
+
+    if (rows.length === 0) {
+      return res.status(401).json({ message: "User account not found." });
+    }
+
+    const user = rows[0];
+    if (!validRoles.has(user.role)) {
+      return res.status(403).json({ message: "Invalid role in account record." });
+    }
+
+    req.auth = {
+      userId: user.id,
+      email: user.email,
+      role: user.role,
+      managerId: user.manager_id || null,
+      mainStoreId: user.main_store_id || null
+    };
+
     return next();
   } catch {
     return res.status(401).json({ message: "Invalid or expired token." });
@@ -69,6 +103,14 @@ function requireAuth(req, res, next) {
 function requireManager(req, res, next) {
   if (req.auth.role !== "Manager") {
     return res.status(403).json({ message: "Manager access required." });
+  }
+
+  return next();
+}
+
+function requireElevatedAccess(req, res, next) {
+  if (!elevatedRoles.has(req.auth.role)) {
+    return res.status(403).json({ message: "Manager or Active Manager access required." });
   }
 
   return next();
@@ -85,7 +127,7 @@ async function getStoreForUser(user, storeId) {
   }
 
   const store = rows[0];
-  const managerId = user.role === "Manager" ? user.userId : user.managerId;
+  const managerId = getManagerScopeId(user);
   if (!managerId || Number(store.manager_id) !== Number(managerId)) {
     return null;
   }
@@ -131,7 +173,7 @@ app.post("/api/auth/signup", async (req, res) => {
     );
 
     const [users] = await pool.query(
-      "SELECT id, name, email, role, manager_id FROM users WHERE id = ?",
+      "SELECT id, name, email, role, manager_id, main_store_id FROM users WHERE id = ?",
       [result.insertId]
     );
     const user = users[0];
@@ -154,7 +196,7 @@ app.post("/api/auth/login", async (req, res) => {
   try {
     const normalizedEmail = String(email).trim().toLowerCase();
     const [rows] = await pool.query(
-      "SELECT id, name, email, password_hash, role, manager_id FROM users WHERE email = ?",
+      "SELECT id, name, email, password_hash, role, manager_id, main_store_id FROM users WHERE email = ?",
       [normalizedEmail]
     );
 
@@ -183,7 +225,7 @@ app.post("/api/auth/login", async (req, res) => {
 
 app.get("/api/me", requireAuth, async (req, res) => {
   try {
-    const [rows] = await pool.query("SELECT id, name, email, role, manager_id FROM users WHERE id = ?", [
+    const [rows] = await pool.query("SELECT id, name, email, role, manager_id, main_store_id FROM users WHERE id = ?", [
       req.auth.userId
     ]);
     if (rows.length === 0) {
@@ -196,7 +238,92 @@ app.get("/api/me", requireAuth, async (req, res) => {
   }
 });
 
-app.post("/api/employees", requireAuth, requireManager, async (req, res) => {
+app.patch("/api/me/main-store", requireAuth, async (req, res) => {
+  const hasMainStoreId = Object.prototype.hasOwnProperty.call(req.body || {}, "mainStoreId");
+  if (!hasMainStoreId) {
+    return res.status(400).json({ message: "mainStoreId is required. Use null to clear selection." });
+  }
+
+  const managerScopeId = getManagerScopeId(req.auth);
+  if (!managerScopeId) {
+    return res.status(403).json({ message: "No manager scope available for this account." });
+  }
+
+  const requestedMainStoreId = req.body.mainStoreId;
+
+  try {
+    if (requestedMainStoreId === null || requestedMainStoreId === "") {
+      await pool.query("UPDATE users SET main_store_id = NULL WHERE id = ?", [req.auth.userId]);
+      const [updatedRows] = await pool.query(
+        "SELECT id, name, email, role, manager_id, main_store_id FROM users WHERE id = ?",
+        [req.auth.userId]
+      );
+      return res.json({ message: "Main store cleared.", user: toPublicUser(updatedRows[0]) });
+    }
+
+    const numericStoreId = Number(requestedMainStoreId);
+    if (!Number.isInteger(numericStoreId) || numericStoreId <= 0) {
+      return res.status(400).json({ message: "Invalid mainStoreId." });
+    }
+
+    const [stores] = await pool.query(
+      "SELECT id FROM stores WHERE id = ? AND manager_id = ? LIMIT 1",
+      [numericStoreId, managerScopeId]
+    );
+
+    if (stores.length === 0) {
+      return res.status(404).json({ message: "Selected store is not accessible for this account." });
+    }
+
+    await pool.query("UPDATE users SET main_store_id = ? WHERE id = ?", [numericStoreId, req.auth.userId]);
+    const [updatedRows] = await pool.query(
+      "SELECT id, name, email, role, manager_id, main_store_id FROM users WHERE id = ?",
+      [req.auth.userId]
+    );
+
+    return res.json({ message: "Main store updated.", user: toPublicUser(updatedRows[0]) });
+  } catch (error) {
+    return res.status(500).json({ message: "Could not update main store.", detail: error.message });
+  }
+});
+
+app.patch("/api/me/password", requireAuth, async (req, res) => {
+  const { currentPassword, newPassword } = req.body;
+
+  if (!currentPassword || !newPassword) {
+    return res.status(400).json({ message: "Current password and new password are required." });
+  }
+
+  if (String(newPassword).length < 6) {
+    return res.status(400).json({ message: "New password must be at least 6 characters." });
+  }
+
+  if (String(currentPassword) === String(newPassword)) {
+    return res.status(400).json({ message: "New password must be different from current password." });
+  }
+
+  try {
+    const [rows] = await pool.query("SELECT id, password_hash FROM users WHERE id = ?", [req.auth.userId]);
+    if (rows.length === 0) {
+      return res.status(404).json({ message: "User not found." });
+    }
+
+    const user = rows[0];
+    const matched = await bcrypt.compare(String(currentPassword), user.password_hash);
+    if (!matched) {
+      return res.status(401).json({ message: "Current password is incorrect." });
+    }
+
+    const newHash = await bcrypt.hash(String(newPassword), 10);
+    await pool.query("UPDATE users SET password_hash = ? WHERE id = ?", [newHash, req.auth.userId]);
+
+    return res.json({ message: "Password updated successfully." });
+  } catch (error) {
+    return res.status(500).json({ message: "Could not update password.", detail: error.message });
+  }
+});
+
+app.post("/api/employees", requireAuth, requireElevatedAccess, async (req, res) => {
   const { name, email, password } = req.body;
 
   if (!name || !email || !password) {
@@ -208,6 +335,11 @@ app.post("/api/employees", requireAuth, requireManager, async (req, res) => {
   }
 
   try {
+    const managerScopeId = getManagerScopeId(req.auth);
+    if (!managerScopeId) {
+      return res.status(403).json({ message: "No manager scope available for this account." });
+    }
+
     const normalizedEmail = String(email).trim().toLowerCase();
     const [existing] = await pool.query("SELECT id FROM users WHERE email = ?", [normalizedEmail]);
 
@@ -218,10 +350,10 @@ app.post("/api/employees", requireAuth, requireManager, async (req, res) => {
     const passwordHash = await bcrypt.hash(password, 10);
     const [insert] = await pool.query(
       "INSERT INTO users (name, email, password_hash, role, manager_id) VALUES (?, ?, ?, 'Employee', ?)",
-      [name.trim(), normalizedEmail, passwordHash, req.auth.userId]
+      [name.trim(), normalizedEmail, passwordHash, managerScopeId]
     );
 
-    const [rows] = await pool.query("SELECT id, name, email, role, manager_id FROM users WHERE id = ?", [
+    const [rows] = await pool.query("SELECT id, name, email, role, manager_id, main_store_id FROM users WHERE id = ?", [
       insert.insertId
     ]);
 
@@ -231,16 +363,70 @@ app.post("/api/employees", requireAuth, requireManager, async (req, res) => {
   }
 });
 
-app.get("/api/employees", requireAuth, requireManager, async (req, res) => {
+app.get("/api/employees", requireAuth, requireElevatedAccess, async (req, res) => {
   try {
+    const managerScopeId = getManagerScopeId(req.auth);
+    if (!managerScopeId) {
+      return res.json({ employees: [] });
+    }
+
     const [rows] = await pool.query(
-      "SELECT id, name, email, role, manager_id FROM users WHERE manager_id = ? ORDER BY created_at DESC",
-      [req.auth.userId]
+      "SELECT id, name, email, role, manager_id, main_store_id FROM users WHERE manager_id = ? ORDER BY created_at DESC",
+      [managerScopeId]
     );
 
     return res.json({ employees: rows.map(toPublicUser) });
   } catch (error) {
     return res.status(500).json({ message: "Could not fetch employees.", detail: error.message });
+  }
+});
+
+app.patch("/api/employees/:employeeId/role", requireAuth, requireManager, async (req, res) => {
+  const employeeId = Number(req.params.employeeId);
+  const { role } = req.body;
+
+  if (!Number.isInteger(employeeId) || employeeId <= 0) {
+    return res.status(400).json({ message: "Invalid employee id." });
+  }
+
+  const allowedTargetRoles = new Set(["Employee", "Active Manager"]);
+  if (!allowedTargetRoles.has(String(role))) {
+    return res.status(400).json({ message: "Role must be Employee or Active Manager." });
+  }
+
+  try {
+    const [rows] = await pool.query(
+      "SELECT id, role, manager_id, main_store_id FROM users WHERE id = ?",
+      [employeeId]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ message: "Employee not found." });
+    }
+
+    const employee = rows[0];
+    if (Number(employee.manager_id) !== Number(req.auth.userId)) {
+      return res.status(403).json({ message: "You can only update roles for your own employees." });
+    }
+
+    const nextRole = String(role);
+    if (employee.role === nextRole) {
+      const [unchanged] = await pool.query(
+        "SELECT id, name, email, role, manager_id, main_store_id FROM users WHERE id = ?",
+        [employeeId]
+      );
+      return res.json({ message: "Role unchanged.", employee: toPublicUser(unchanged[0]) });
+    }
+
+    await pool.query("UPDATE users SET role = ? WHERE id = ?", [nextRole, employeeId]);
+    const [updatedRows] = await pool.query(
+      "SELECT id, name, email, role, manager_id, main_store_id FROM users WHERE id = ?",
+      [employeeId]
+    );
+
+    return res.json({ message: "Employee role updated.", employee: toPublicUser(updatedRows[0]) });
+  } catch (error) {
+    return res.status(500).json({ message: "Could not update employee role.", detail: error.message });
   }
 });
 
@@ -272,7 +458,7 @@ app.post("/api/stores", requireAuth, requireManager, async (req, res) => {
 
 app.get("/api/stores", requireAuth, async (req, res) => {
   try {
-    const managerId = req.auth.role === "Manager" ? req.auth.userId : req.auth.managerId;
+    const managerId = getManagerScopeId(req.auth);
 
     if (!managerId) {
       return res.json({ stores: [] });
@@ -291,7 +477,7 @@ app.get("/api/stores", requireAuth, async (req, res) => {
 
 app.get("/api/inventory-categories", requireAuth, async (req, res) => {
   try {
-    const managerId = req.auth.role === "Manager" ? req.auth.userId : req.auth.managerId;
+    const managerId = getManagerScopeId(req.auth);
     if (!managerId) {
       return res.json({ categories: [] });
     }
@@ -324,7 +510,7 @@ app.get("/api/inventory/posts", requireAuth, async (req, res) => {
   }
 
   try {
-    const managerId = req.auth.role === "Manager" ? req.auth.userId : req.auth.managerId;
+    const managerId = getManagerScopeId(req.auth);
     if (!managerId) {
       return res.json({ posts: [] });
     }
@@ -378,7 +564,7 @@ app.get("/api/inventory/posts", requireAuth, async (req, res) => {
 
 app.get("/api/inventory/cumulative", requireAuth, async (req, res) => {
   try {
-    const managerId = req.auth.role === "Manager" ? req.auth.userId : req.auth.managerId;
+    const managerId = getManagerScopeId(req.auth);
     if (!managerId) {
       return res.json({ stores: [], items: [] });
     }
@@ -429,7 +615,7 @@ app.get("/api/inventory/cumulative", requireAuth, async (req, res) => {
   }
 });
 
-app.patch("/api/inventory/cumulative", requireAuth, requireManager, async (req, res) => {
+app.patch("/api/inventory/cumulative", requireAuth, requireElevatedAccess, async (req, res) => {
   const { inventoryCategory, inventoryName, newInventoryCategory, newInventoryName, preferredCount } = req.body;
 
   if (!inventoryCategory || !inventoryName) {
@@ -445,6 +631,11 @@ app.patch("/api/inventory/cumulative", requireAuth, requireManager, async (req, 
   }
 
   try {
+    const managerScopeId = getManagerScopeId(req.auth);
+    if (!managerScopeId) {
+      return res.status(403).json({ message: "No manager scope available for this account." });
+    }
+
     const safeCurrentCategory = String(inventoryCategory).trim();
     const safeCurrentName = String(inventoryName).trim();
     const safeNewCategory = String(newInventoryCategory).trim();
@@ -452,7 +643,7 @@ app.patch("/api/inventory/cumulative", requireAuth, requireManager, async (req, 
     const safePreferredCount = Number(preferredCount);
 
     await pool.query("INSERT IGNORE INTO inventory_categories (manager_id, name) VALUES (?, ?)", [
-      req.auth.userId,
+      managerScopeId,
       safeNewCategory
     ]);
 
@@ -469,7 +660,7 @@ app.patch("/api/inventory/cumulative", requireAuth, requireManager, async (req, 
         safeNewCategory,
         safeNewName,
         safePreferredCount,
-        req.auth.userId,
+        managerScopeId,
         safeCurrentCategory,
         safeCurrentName
       ]
@@ -609,7 +800,7 @@ app.get("/api/stores/:storeId/inventory/posts", requireAuth, async (req, res) =>
   }
 });
 
-app.post("/api/stores/:storeId/inventory", requireAuth, requireManager, async (req, res) => {
+app.post("/api/stores/:storeId/inventory", requireAuth, requireElevatedAccess, async (req, res) => {
   const storeId = Number(req.params.storeId);
   const { inventoryCategory, inventoryName, inventoryCount, preferredCount, addToAllStores } = req.body;
 
@@ -634,6 +825,11 @@ app.post("/api/stores/:storeId/inventory", requireAuth, requireManager, async (r
   }
 
   try {
+    const managerScopeId = getManagerScopeId(req.auth);
+    if (!managerScopeId) {
+      return res.status(403).json({ message: "No manager scope available for this account." });
+    }
+
     const store = await getStoreForUser(req.auth, storeId);
     if (!store) {
       return res.status(404).json({ message: "Store not found or not accessible." });
@@ -641,7 +837,7 @@ app.post("/api/stores/:storeId/inventory", requireAuth, requireManager, async (r
 
     const targetStoreIds = [];
     if (Boolean(addToAllStores)) {
-      const [allStores] = await pool.query("SELECT id FROM stores WHERE manager_id = ?", [req.auth.userId]);
+      const [allStores] = await pool.query("SELECT id FROM stores WHERE manager_id = ?", [managerScopeId]);
       allStores.forEach((entry) => targetStoreIds.push(entry.id));
     } else {
       targetStoreIds.push(storeId);
@@ -658,7 +854,7 @@ app.post("/api/stores/:storeId/inventory", requireAuth, requireManager, async (r
     const safeName = String(inventoryName).trim();
 
     await pool.query("INSERT IGNORE INTO inventory_categories (manager_id, name) VALUES (?, ?)", [
-      req.auth.userId,
+      managerScopeId,
       safeCategory
     ]);
 

@@ -267,6 +267,104 @@ select:focus {
   font-size: 0.9rem;
 }
 
+.loading-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  color: #7a5a37;
+  font-size: 0.88rem;
+  letter-spacing: 0.01em;
+}
+
+.loading-indicator.inline {
+  margin-top: 0.35rem;
+}
+
+.loading-indicator.compact {
+  font-size: 0.78rem;
+  gap: 0.46rem;
+}
+
+.loading-core {
+  position: relative;
+  width: 1.1rem;
+  height: 1.1rem;
+  display: inline-grid;
+  place-items: center;
+}
+
+.loading-indicator.compact .loading-core {
+  width: 0.92rem;
+  height: 0.92rem;
+}
+
+.loading-ring,
+.loading-dot {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+}
+
+.loading-ring {
+  border: 2px solid rgba(199, 122, 45, 0.2);
+  border-top-color: rgba(199, 122, 45, 0.92);
+  border-right-color: rgba(47, 143, 149, 0.65);
+  animation: loading-spin 0.95s linear infinite;
+}
+
+.loading-dot {
+  width: 34%;
+  height: 34%;
+  margin: auto;
+  background: radial-gradient(circle at 35% 35%, #ffffff, #ca5d74 62%);
+  box-shadow: 0 0 0 3px rgba(202, 93, 116, 0.13);
+  animation: loading-pulse 1.1s ease-in-out infinite;
+}
+
+.loading-label {
+  background: linear-gradient(90deg, #7b5734 0%, #9c7044 45%, #6f8e8f 60%, #7b5734 100%);
+  background-size: 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: loading-shimmer 1.8s ease infinite;
+}
+
+@keyframes loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes loading-pulse {
+  0%,
+  100% {
+    transform: scale(0.72);
+    opacity: 0.85;
+  }
+  50% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes loading-shimmer {
+  0% {
+    background-position: 0% 50%;
+  }
+  100% {
+    background-position: 100% 50%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loading-ring,
+  .loading-dot,
+  .loading-label {
+    animation: none;
+  }
+}
+
 .dashboard-page {
   display: block;
   padding: 1rem;
@@ -290,6 +388,17 @@ select:focus {
   color: var(--muted);
   display: grid;
   gap: 0.8rem;
+}
+
+.dashboard-status {
+  margin-top: 0.75rem;
+  border: 1px solid #d5b793;
+  border-radius: 11px;
+  background: linear-gradient(120deg, rgba(225, 171, 112, 0.22), rgba(47, 143, 149, 0.12));
+  color: #5d3f22;
+  padding: 0.62rem 0.78rem;
+  font-size: 0.88rem;
+  font-weight: 600;
 }
 
 .section-row {
@@ -595,6 +704,16 @@ select:focus {
   align-items: center;
   gap: 0.42rem;
   flex-wrap: wrap;
+}
+
+.role-edit-row {
+  margin-top: 0.6rem;
+  display: grid;
+  gap: 0.55rem;
+}
+
+.role-edit-row label {
+  font-size: 0.76rem;
 }
 
 .section-title .ui-icon,

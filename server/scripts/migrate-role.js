@@ -2,6 +2,16 @@ require("dotenv").config();
 
 const mysql = require("mysql2/promise");
 
+const roleColumnDDL = "ENUM('Employee', 'Active Manager', 'Manager') NOT NULL DEFAULT 'Employee'";
+
+async function hasRoleColumn(connection) {
+  const [rows] = await connection.query(
+    "SELECT COUNT(*) AS count FROM information_schema.columns WHERE table_schema = ? AND table_name = 'users' AND column_name = 'role'",
+    [process.env.DB_NAME]
+  );
+  return rows[0].count > 0;
+}
+
 async function run() {
   const connection = await mysql.createConnection({
     host: process.env.DB_HOST,
@@ -13,13 +23,13 @@ async function run() {
   });
 
   try {
-    await connection.query("ALTER TABLE users ADD COLUMN role ENUM('Employee', 'Manager') NOT NULL DEFAULT 'Employee'");
-    console.log("Migration applied: role column added.");
-  } catch (error) {
-    if (String(error.message).includes("Duplicate column name 'role'")) {
-      console.log("Migration skipped: role column already exists.");
+    const roleExists = await hasRoleColumn(connection);
+    if (!roleExists) {
+      await connection.query(`ALTER TABLE users ADD COLUMN role ${roleColumnDDL}`);
+      console.log("Migration applied: role column added.");
     } else {
-      throw error;
+      await connection.query(`ALTER TABLE users MODIFY COLUMN role ${roleColumnDDL}`);
+      console.log("Migration applied: role enum updated.");
     }
   } finally {
     await connection.end();
