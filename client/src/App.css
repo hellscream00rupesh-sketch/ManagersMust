@@ -903,6 +903,19 @@ label .ui-icon,
   gap: 0.55rem;
 }
 
+.news-feed-date-grid {
+  padding-right: 0.2rem;
+}
+
+.news-feed-date-grid label,
+.news-feed-date-grid input[type="date"] {
+  min-width: 0;
+}
+
+.news-feed-date-grid input[type="date"] {
+  max-width: 100%;
+}
+
 .store-inventory-filter-grid {
   margin-top: 0.15rem;
 }
@@ -1317,6 +1330,11 @@ label .ui-icon,
 
   .overview-filter-grid {
     grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .news-feed-date-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding-right: 0;
   }
 
   .store-inventory-filter-grid {

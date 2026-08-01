@@ -2955,7 +2955,7 @@ function App() {
             </div>
           </div>
 
-          <div className="overview-filter-grid">
+          <div className="overview-filter-grid news-feed-date-grid">
             <label>
               <span className="icon-text"><UIIcon name="clock" />Date From</span>
               <input
