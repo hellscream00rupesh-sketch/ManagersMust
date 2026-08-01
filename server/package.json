@@ -13,7 +13,8 @@
     "migrate:remove-inventory-item-category": "node scripts/migrate-remove-inventory-item-category.js",
     "migrate:sub-items": "node scripts/migrate-sub-items.js",
     "migrate:sub-item-table": "node scripts/migrate-sub-item-table.js",
-    "migrate:post-sub-item-counts": "node scripts/migrate-post-sub-item-counts.js"
+    "migrate:post-sub-item-counts": "node scripts/migrate-post-sub-item-counts.js",
+    "migrate:current-sub-item-counts": "node scripts/migrate-current-sub-item-counts.js"
   },
   "keywords": [],
   "author": "",

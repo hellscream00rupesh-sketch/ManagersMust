@@ -220,6 +220,150 @@ async function attachSubItemCountsToPosts(rows) {
   return rows;
 }
 
+async function getCurrentSubItemCountsByInventoryIds(inventoryIds) {
+  if (!Array.isArray(inventoryIds) || inventoryIds.length === 0) {
+    return new Map();
+  }
+
+  const placeholders = inventoryIds.map(() => "?").join(", ");
+  const [rows] = await pool.query(
+    `SELECT
+       inventory_id AS inventoryId,
+       sub_item_number AS subItemNumber,
+       label,
+       current_count AS postedCount
+     FROM inventory_current_sub_item_counts
+     WHERE inventory_id IN (${placeholders})
+     ORDER BY inventory_id ASC, sub_item_number ASC, id ASC`,
+    inventoryIds
+  );
+
+  const map = new Map();
+  inventoryIds.forEach((id) => map.set(Number(id), []));
+
+  rows.forEach((row) => {
+    const key = Number(row.inventoryId);
+    if (!map.has(key)) {
+      map.set(key, []);
+    }
+
+    map.get(key).push({
+      subItemNumber: Number(row.subItemNumber || 0),
+      label: String(row.label || "").trim(),
+      postedCount: Number(row.postedCount || 0)
+    });
+  });
+
+  return map;
+}
+
+async function syncCurrentSubItemCountsForInventory(inventoryId, labels = []) {
+  const safeInventoryId = Number(inventoryId);
+  if (!Number.isInteger(safeInventoryId) || safeInventoryId <= 0) {
+    return;
+  }
+
+  const normalizedLabels = normalizeSubItemsInput(labels, null);
+  if (normalizedLabels.length === 0) {
+    await pool.query("DELETE FROM inventory_current_sub_item_counts WHERE inventory_id = ?", [safeInventoryId]);
+    return;
+  }
+
+  const numbers = normalizedLabels.map((_, index) => index + 1);
+  const deletePlaceholders = numbers.map(() => "?").join(", ");
+  await pool.query(
+    `DELETE FROM inventory_current_sub_item_counts WHERE inventory_id = ? AND sub_item_number NOT IN (${deletePlaceholders})`,
+    [safeInventoryId, ...numbers]
+  );
+
+  const placeholders = normalizedLabels.map(() => "(?, ?, ?, ?)").join(", ");
+  const values = [];
+  normalizedLabels.forEach((label, index) => {
+    values.push(safeInventoryId, index + 1, label, 0);
+  });
+
+  await pool.query(
+    `INSERT INTO inventory_current_sub_item_counts (inventory_id, sub_item_number, label, current_count)
+     VALUES ${placeholders}
+     ON DUPLICATE KEY UPDATE label = VALUES(label)`,
+    values
+  );
+}
+
+async function setCurrentSubItemCountsForInventory(inventoryId, subItemCounts = [], labels = []) {
+  const safeInventoryId = Number(inventoryId);
+  if (!Number.isInteger(safeInventoryId) || safeInventoryId <= 0) {
+    return;
+  }
+
+  const normalizedLabels = normalizeSubItemsInput(labels, null);
+  if (normalizedLabels.length === 0) {
+    await pool.query("DELETE FROM inventory_current_sub_item_counts WHERE inventory_id = ?", [safeInventoryId]);
+    return;
+  }
+
+  const entryByNumber = new Map();
+  normalizedLabels.forEach((label, index) => {
+    entryByNumber.set(index + 1, {
+      subItemNumber: index + 1,
+      label,
+      postedCount: 0
+    });
+  });
+
+  if (Array.isArray(subItemCounts)) {
+    subItemCounts.forEach((entry, index) => {
+      const subItemNumber =
+        Number.isInteger(Number(entry?.subItemNumber)) && Number(entry.subItemNumber) > 0
+          ? Number(entry.subItemNumber)
+          : index + 1;
+      const normalized = entryByNumber.get(subItemNumber);
+      if (!normalized) {
+        return;
+      }
+
+      normalized.label = String(entry?.label || normalized.label || "").trim() || normalized.label;
+      normalized.postedCount = Number(entry?.postedCount ?? 0);
+    });
+  }
+
+  const numbers = Array.from(entryByNumber.keys());
+  const deletePlaceholders = numbers.map(() => "?").join(", ");
+  await pool.query(
+    `DELETE FROM inventory_current_sub_item_counts WHERE inventory_id = ? AND sub_item_number NOT IN (${deletePlaceholders})`,
+    [safeInventoryId, ...numbers]
+  );
+
+  const placeholders = numbers.map(() => "(?, ?, ?, ?)").join(", ");
+  const values = [];
+  numbers.forEach((subItemNumber) => {
+    const entry = entryByNumber.get(subItemNumber);
+    values.push(safeInventoryId, subItemNumber, entry.label, entry.postedCount);
+  });
+
+  await pool.query(
+    `INSERT INTO inventory_current_sub_item_counts (inventory_id, sub_item_number, label, current_count)
+     VALUES ${placeholders}
+     ON DUPLICATE KEY UPDATE label = VALUES(label), current_count = VALUES(current_count)`,
+    values
+  );
+}
+
+async function attachCurrentSubItemCountsToInventoryRows(rows, idSelector = (row) => row.id) {
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return rows;
+  }
+
+  const inventoryIds = rows.map((row) => Number(idSelector(row))).filter((id) => Number.isInteger(id) && id > 0);
+  const countsMap = await getCurrentSubItemCountsByInventoryIds(inventoryIds);
+
+  rows.forEach((row) => {
+    row.subItemCounts = countsMap.get(Number(idSelector(row))) || [];
+  });
+
+  return rows;
+}
+
 async function requireAuth(req, res, next) {
   const authHeader = req.headers.authorization || "";
   const [scheme, token] = authHeader.split(" ");
@@ -821,6 +965,7 @@ app.get("/api/inventory/cumulative", requireAuth, async (req, res) => {
 
     const inventoryIds = rows.map((row) => Number(row.inventoryId)).filter((id) => Number.isInteger(id) && id > 0);
     const subItemsMap = await getSubItemsByInventoryIds(inventoryIds);
+    const currentSubItemCountsMap = await getCurrentSubItemCountsByInventoryIds(inventoryIds);
 
     const itemsMap = new Map();
 
@@ -837,6 +982,7 @@ app.get("/api/inventory/cumulative", requireAuth, async (req, res) => {
           preferredByStore: {},
           cumulativePreferredCount: 0,
           cumulativeCount: 0,
+          subItemCounts: [],
           subItems: []
         });
       }
@@ -857,6 +1003,29 @@ app.get("/api/inventory/cumulative", requireAuth, async (req, res) => {
         if (!item.subItems.includes(label)) {
           item.subItems.push(label);
         }
+      });
+
+      const rowSubItemCounts = currentSubItemCountsMap.get(Number(row.inventoryId)) || [];
+      rowSubItemCounts.forEach((entry) => {
+        const safeLabel = String(entry.label || "").trim();
+        const existingEntry = item.subItemCounts.find((subItem) => {
+          if (safeLabel && subItem.label) {
+            return subItem.label.toLowerCase() === safeLabel.toLowerCase();
+          }
+
+          return Number(subItem.subItemNumber || 0) === Number(entry.subItemNumber || 0);
+        });
+
+        if (existingEntry) {
+          existingEntry.postedCount += Number(entry.postedCount || 0);
+          return;
+        }
+
+        item.subItemCounts.push({
+          subItemNumber: Number(entry.subItemNumber || 0),
+          label: safeLabel,
+          postedCount: Number(entry.postedCount || 0)
+        });
       });
 
       if (item.subItems.length > 0) {
@@ -990,7 +1159,10 @@ app.patch("/api/inventory/cumulative", requireAuth, requireElevatedAccess, async
     }
 
     await Promise.all(
-      matchedRows.map((row) => replaceInventorySubItems(row.inventoryId, safeNewSubItems))
+      matchedRows.map(async (row) => {
+        await replaceInventorySubItems(row.inventoryId, safeNewSubItems);
+        await syncCurrentSubItemCountsForInventory(row.inventoryId, safeNewSubItems);
+      })
     );
 
     return res.json({
@@ -1101,6 +1273,7 @@ app.get("/api/stores/:storeId/inventory", requireAuth, async (req, res) => {
 
     const [rows] = await pool.query(query, values);
     await attachSubItemsToInventoryRows(rows);
+    await attachCurrentSubItemCountsToInventoryRows(rows);
 
     return res.json({ store, inventory: rows });
   } catch (error) {
@@ -1284,6 +1457,7 @@ app.post("/api/stores/:storeId/inventory", requireAuth, requireElevatedAccess, a
       insertedByStore.set(Number(targetId), Number(inserted.insertId));
 
       await replaceInventorySubItems(inserted.insertId, safeSubItems);
+      await syncCurrentSubItemCountsForInventory(inserted.insertId, safeSubItems);
     }
 
     const selectedStoreItemId = insertedByStore.get(Number(storeId));
@@ -1293,6 +1467,7 @@ app.post("/api/stores/:storeId/inventory", requireAuth, requireElevatedAccess, a
     );
 
     await attachSubItemsToInventoryRows(rows);
+    await attachCurrentSubItemCountsToInventoryRows(rows);
 
     return res.status(201).json({
       message: Boolean(addToAllStores)
@@ -1386,6 +1561,12 @@ app.patch("/api/stores/:storeId/inventory/:itemId/count", requireAuth, async (re
       );
     }
 
+    const [subItemRows] = await pool.query(
+      "SELECT sub_item_number AS subItemNumber, label FROM inventory_sub_items WHERE inventory_id = ? ORDER BY sub_item_number ASC, id ASC",
+      [itemId]
+    );
+    await setCurrentSubItemCountsForInventory(itemId, normalizedSubItemCounts, subItemRows.map((row) => row.label));
+
     const [postRows] = await pool.query(
       `SELECT
          p.id,
@@ -1408,8 +1589,10 @@ app.patch("/api/stores/:storeId/inventory/:itemId/count", requireAuth, async (re
     );
 
     await attachSubItemCountsToPosts(postRows);
+    await attachSubItemsToInventoryRows(rows);
+    await attachCurrentSubItemCountsToInventoryRows(rows);
 
-    return res.json({ message: "Inventory count updated.", item: updatedItem, post: postRows[0] || null });
+    return res.json({ message: "Inventory count updated.", item: rows[0] || updatedItem, post: postRows[0] || null });
   } catch (error) {
     return res.status(500).json({ message: "Could not update inventory count.", detail: error.message });
   }
@@ -1481,6 +1664,7 @@ app.patch("/api/stores/:storeId/inventory/:itemId", requireAuth, requireElevated
     }
 
     await replaceInventorySubItems(itemId, safeSubItems);
+    await syncCurrentSubItemCountsForInventory(itemId, safeSubItems);
 
     await pool.query("INSERT IGNORE INTO inventory_categories (manager_id, name) VALUES (?, ?)", [
       managerScopeId,
@@ -1493,6 +1677,7 @@ app.patch("/api/stores/:storeId/inventory/:itemId", requireAuth, requireElevated
     );
 
     await attachSubItemsToInventoryRows(rows);
+    await attachCurrentSubItemCountsToInventoryRows(rows);
 
     return res.json({ message: "Inventory item updated.", item: rows[0] || null });
   } catch (error) {

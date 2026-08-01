@@ -86,3 +86,15 @@ CREATE TABLE IF NOT EXISTS inventory_post_sub_items (
   CONSTRAINT uq_inventory_post_sub_items UNIQUE (post_id, sub_item_number),
   CONSTRAINT fk_inventory_post_sub_items_post FOREIGN KEY (post_id) REFERENCES inventory_posts(id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS inventory_current_sub_item_counts (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  inventory_id BIGINT NOT NULL,
+  sub_item_number INT NOT NULL,
+  label VARCHAR(120) NOT NULL,
+  current_count INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT uq_inventory_current_sub_item_counts UNIQUE (inventory_id, sub_item_number),
+  CONSTRAINT fk_inventory_current_sub_item_counts_inventory FOREIGN KEY (inventory_id) REFERENCES inventories(id) ON DELETE CASCADE
+);

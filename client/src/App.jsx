@@ -134,14 +134,81 @@ function serializeSubItemLabels(value) {
   return labels.length > 0 ? labels.join(" | ") : null;
 }
 
+function formatSubItemLabel(label, subItemNumber) {
+  const safeLabel = String(label || "").trim();
+  if (safeLabel) {
+    return safeLabel;
+  }
+
+  const safeSubItemNumber = Number(subItemNumber);
+  return Number.isInteger(safeSubItemNumber) && safeSubItemNumber > 0 ? "Sub Item" : "";
+}
+
+function formatSubItemLabelsList(subItems = []) {
+  return subItems
+    .map((label, index) => formatSubItemLabel(label, index + 1))
+    .filter(Boolean)
+    .join(" | ");
+}
+
+function getSubItemCountEntries(subItems = [], subItemCounts = []) {
+  const labels = Array.isArray(subItems)
+    ? subItems.map((label) => String(label || "").trim()).filter(Boolean)
+    : [];
+  const counts = Array.isArray(subItemCounts) ? subItemCounts : [];
+  const countByLabel = new Map();
+  const countByNumber = new Map();
+
+  counts.forEach((entry) => {
+    const label = String(entry?.label || "").trim();
+    const subItemNumber = Number(entry?.subItemNumber || 0);
+    const postedCount = Number(entry?.postedCount || 0);
+
+    if (label) {
+      countByLabel.set(label.toLowerCase(), postedCount);
+    }
+
+    if (Number.isInteger(subItemNumber) && subItemNumber > 0) {
+      countByNumber.set(subItemNumber, postedCount);
+    }
+  });
+
+  const entries = labels.map((label, index) => ({
+    label: formatSubItemLabel(label, index + 1),
+    postedCount: countByLabel.get(label.toLowerCase()) ?? countByNumber.get(index + 1) ?? 0
+  }));
+
+  counts.forEach((entry) => {
+    const label = formatSubItemLabel(entry?.label, entry?.subItemNumber);
+    if (!label) {
+      return;
+    }
+
+    const exists = entries.some((existingEntry) => existingEntry.label.toLowerCase() === label.toLowerCase());
+    if (!exists) {
+      entries.push({
+        label,
+        postedCount: Number(entry?.postedCount || 0)
+      });
+    }
+  });
+
+  return entries;
+}
+
+function formatSubItemCountsList(subItems = [], subItemCounts = []) {
+  return getSubItemCountEntries(subItems, subItemCounts)
+    .map((entry) => `${entry.label}: ${entry.postedCount}`)
+    .join(" | ");
+}
+
 function formatInventoryItemCategoryLabel(itemCategory, subItemNumber, subItems = []) {
   const labels = Array.isArray(subItems) && subItems.length > 0
     ? subItems.map((entry) => String(entry || "").trim()).filter(Boolean)
     : parseSubItemLabels(itemCategory);
   const safeSubItemNumber = Number(subItemNumber);
   if (Number.isInteger(safeSubItemNumber) && safeSubItemNumber > 0) {
-    const label = labels[0] || "";
-    return label ? `Sub Item #${safeSubItemNumber} (${label})` : `Sub Item #${safeSubItemNumber}`;
+    return formatSubItemLabel(labels[0], safeSubItemNumber) || "Sub Item";
   }
 
   if (labels.length === 0) {
@@ -149,10 +216,10 @@ function formatInventoryItemCategoryLabel(itemCategory, subItemNumber, subItems 
   }
 
   if (labels.length === 1) {
-    return `Sub Item #1 (${labels[0]})`;
+    return formatSubItemLabel(labels[0], 1) || "Sub Item";
   }
 
-  return labels.map((label, index) => `#${index + 1} ${label}`).join(", ");
+  return labels.map((label, index) => formatSubItemLabel(label, index + 1)).filter(Boolean).join(", ");
 }
 
 function sumInventoryPreferredCounts(item, storeIds) {
@@ -1492,7 +1559,12 @@ function App() {
         )
       );
 
-      await loadPostFeed("");
+      await Promise.all([
+        loadPostFeed(""),
+        loadCumulativeInventory(),
+        loadStoreInventory(dailyPostStoreId)
+      ]);
+
       setMessage("Inventory Daily Post submitted successfully.");
       setShowDailyPostModal(false);
       resetDailyPostComposer();
@@ -2296,7 +2368,8 @@ function App() {
                               {Array.isArray(item.subItems) && item.subItems.length > 0 ? (
                                 <details className="subitem-details">
                                   <summary>{`Sub-items (${item.subItems.length})`}</summary>
-                                  <p className="tiny">{item.subItems.map((label, index) => `#${index + 1} ${label}`).join(" | ")}</p>
+                                  <p className="tiny">{formatSubItemLabelsList(item.subItems)}</p>
+                                  <p className="tiny">{formatSubItemCountsList(item.subItems, item.subItemCounts)}</p>
                                 </details>
                               ) : (
                                 <p className="tiny">{formatInventoryItemCategoryLabel(item.inventoryItemCategory, item.subItemNumber, item.subItems)}</p>
@@ -2442,7 +2515,7 @@ function App() {
                           className="signout-btn"
                           onClick={() => onRemoveInventorySubItem(index)}
                         >
-                          {`#${index + 1} ${label} ×`}
+                          {`${label} ×`}
                         </button>
                       ))}
                     </div>
@@ -2584,7 +2657,8 @@ function App() {
                                   {Array.isArray(item.subItems) && item.subItems.length > 0 ? (
                                     <details className="subitem-details">
                                       <summary>{`Sub-items (${item.subItems.length})`}</summary>
-                                      <p className="tiny">{item.subItems.map((label, index) => `#${index + 1} ${label}`).join(" | ")}</p>
+                                      <p className="tiny">{formatSubItemLabelsList(item.subItems)}</p>
+                                      <p className="tiny">{formatSubItemCountsList(item.subItems, item.subItemCounts)}</p>
                                     </details>
                                   ) : (
                                     <p className="tiny">{formatInventoryItemCategoryLabel(item.inventoryItemCategory, item.subItemNumber, item.subItems)}</p>
@@ -2758,7 +2832,8 @@ function App() {
                           {Array.isArray(item.subItems) && item.subItems.length > 0 ? (
                             <details className="subitem-details">
                               <summary>{`Sub-items (${item.subItems.length})`}</summary>
-                              <p className="tiny">{item.subItems.map((label, index) => `#${index + 1} ${label}`).join(" | ")}</p>
+                              <p className="tiny">{formatSubItemLabelsList(item.subItems)}</p>
+                              <p className="tiny">{formatSubItemCountsList(item.subItems, item.subItemCounts)}</p>
                             </details>
                           ) : (
                             <p className="tiny">{formatInventoryItemCategoryLabel(item.inventoryItemCategory, item.subItemNumber, item.subItems)}</p>
@@ -3184,7 +3259,7 @@ function App() {
                             {Array.isArray(entry.subItemCounts) && entry.subItemCounts.length > 0 && (
                               <p className="tiny">
                                 {entry.subItemCounts
-                                  .map((sub) => `#${sub.subItemNumber} ${sub.label}: ${sub.postedCount}`)
+                                  .map((sub) => `${formatSubItemLabel(sub.label, sub.subItemNumber)}: ${sub.postedCount}`)
                                   .join(" | ")}
                               </p>
                             )}
@@ -3573,12 +3648,12 @@ function App() {
                             className="signout-btn"
                             onClick={() => onRemoveStoreEditSubItem(index)}
                           >
-                            {`#${index + 1} ${label} ×`}
+                            {`${label} ×`}
                           </button>
                         ))}
                       </div>
                     )}
-                    <p className="tiny">Add multiple sub items. Sub-item numbering is automatic.</p>
+                    <p className="tiny">Add multiple sub items. You can remove any added sub item.</p>
                   </label>
                   <label>
                     <span className="icon-text"><UIIcon name="inventory" />Inventory Name</span>
@@ -3736,12 +3811,12 @@ function App() {
                             className="signout-btn"
                             onClick={() => onRemoveCumulativeEditSubItem(index)}
                           >
-                            {`#${index + 1} ${label} ×`}
+                            {`${label} ×`}
                           </button>
                         ))}
                       </div>
                     )}
-                    <p className="tiny">Add multiple sub items. Sub-item numbering is automatic.</p>
+                    <p className="tiny">Add multiple sub items. You can remove any added sub item.</p>
                   </label>
                   <label>
                     <span className="icon-text"><UIIcon name="inventory" />Inventory Name</span>
