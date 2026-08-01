@@ -7,7 +7,10 @@
     "dev": "node src/server.js",
     "start": "node src/server.js",
     "migrate:role": "node scripts/migrate-role.js",
-    "migrate:main-store": "node scripts/migrate-main-store.js"
+    "migrate:main-store": "node scripts/migrate-main-store.js",
+    "migrate:inventory-groups": "node scripts/migrate-inventory-groups.js",
+    "migrate:add-inventory-item-category": "node scripts/migrate-add-inventory-item-category.js",
+    "migrate:remove-inventory-item-category": "node scripts/migrate-remove-inventory-item-category.js"
   },
   "keywords": [],
   "author": "",

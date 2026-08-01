@@ -51,6 +51,33 @@ function UIIcon({ name, className = "" }) {
   );
 }
 
+function BrandMark({ className = "" }) {
+  return (
+    <span className={`brand-mark ${className}`.trim()} aria-hidden="true">
+      <svg viewBox="0 0 64 64" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M18 26.5 32 15l14 11.5V47a3 3 0 0 1-3 3H21a3 3 0 0 1-3-3V26.5Z" />
+        <path d="M24 31h16" />
+        <path d="M24 38h10" />
+        <path d="m39 36 2.5 2.5L46 34" />
+        <path d="M28 50V39h8v11" />
+      </svg>
+    </span>
+  );
+}
+
+function BrandLockup({ eyebrow, title, subtitle, compact = false }) {
+  return (
+    <div className={compact ? "brand-row compact" : "brand-row"}>
+      <BrandMark />
+      <div>
+        {eyebrow && <p className="eyebrow">{eyebrow}</p>}
+        <h1>{title}</h1>
+        {subtitle && <p className="brand-subtitle">{subtitle}</p>}
+      </div>
+    </div>
+  );
+}
+
 function LoadingIndicator({ label = "Loading...", inline = false, compact = false }) {
   const className = [
     "loading-indicator",
@@ -84,6 +111,74 @@ function getInitialUser() {
   }
 }
 
+function formatInventoryCategoryLabel(category, group) {
+  const safeCategory = String(category || "").trim();
+  const safeGroup = String(group || "").trim();
+
+  if (!safeCategory) {
+    return safeGroup || "Uncategorized";
+  }
+
+  return safeGroup ? `${safeCategory} / ${safeGroup}` : safeCategory;
+}
+
+function formatInventoryItemCategoryLabel(itemCategory) {
+  const safeItemCategory = String(itemCategory || "").trim();
+  return safeItemCategory || "Uncategorized";
+}
+
+function sumInventoryPreferredCounts(item, storeIds) {
+  return storeIds.reduce((sum, storeId) => sum + Number(item.preferredByStore?.[String(storeId)] || 0), 0);
+}
+
+function sumInventoryCounts(item, storeIds) {
+  return storeIds.reduce((sum, storeId) => sum + Number(item.countsByStore?.[String(storeId)] || 0), 0);
+}
+
+function getInventoryScopeStats(item, storeIds) {
+  return storeIds.reduce(
+    (stats, storeId) => {
+      const visibleCount = Number(item.countsByStore?.[String(storeId)] || 0);
+      const preferredCount = Number(item.preferredByStore?.[String(storeId)] || 0);
+
+      stats.visibleCount += visibleCount;
+      stats.preferredCount += preferredCount;
+      stats.shortage += Math.max(preferredCount - visibleCount, 0);
+      return stats;
+    },
+    { visibleCount: 0, preferredCount: 0, shortage: 0 }
+  );
+}
+
+function buildInventoryItemKey(category, group, itemCategory, inventoryName) {
+  return [
+    String(category || "").trim(),
+    String(group || "").trim(),
+    String(itemCategory || "").trim(),
+    String(inventoryName || "").trim()
+  ].join("::");
+}
+
+function encodeCategorySelection(category, group = "") {
+  return JSON.stringify({ category, group });
+}
+
+function decodeCategorySelection(value) {
+  if (!value) {
+    return { category: "", group: "" };
+  }
+
+  try {
+    const parsed = JSON.parse(value);
+    return {
+      category: String(parsed.category || "").trim(),
+      group: String(parsed.group || "").trim()
+    };
+  } catch {
+    return { category: "", group: "" };
+  }
+}
+
 function App() {
   const [activeTab, setActiveTab] = useState("overview");
   const [mode, setMode] = useState("login");
@@ -113,18 +208,40 @@ function App() {
   const [editingInventoryKey, setEditingInventoryKey] = useState("");
   const [editInventoryForm, setEditInventoryForm] = useState({
     inventoryCategory: "",
+    inventoryGroup: "",
+    inventoryItemCategory: "",
     inventoryName: "",
-    preferredCount: "0"
+    preferredCount: "0",
+    editStoreId: "all",
+    deleteStoreId: "all"
   });
+  const [deletingInventoryKey, setDeletingInventoryKey] = useState("");
   const [storeInventory, setStoreInventory] = useState([]);
   const [loadingStoreInventory, setLoadingStoreInventory] = useState(false);
+  const [editingStoreInventoryId, setEditingStoreInventoryId] = useState(null);
+  const [savingStoreInventoryId, setSavingStoreInventoryId] = useState(null);
+  const [deletingStoreInventoryId, setDeletingStoreInventoryId] = useState(null);
+  const [storeInventoryEditForm, setStoreInventoryEditForm] = useState({
+    inventoryCategory: "",
+    inventoryGroup: "",
+    inventoryItemCategory: "",
+    inventoryName: "",
+    inventoryCount: "0",
+    preferredCount: "0",
+    updateScope: "current",
+    deleteScope: "current"
+  });
   const [storeInventorySearch, setStoreInventorySearch] = useState("");
   const [storeInventoryCategoryFilter, setStoreInventoryCategoryFilter] = useState("All");
   const [storeInventoryHealthFilter, setStoreInventoryHealthFilter] = useState("all");
+  const [inventoryViewSearch, setInventoryViewSearch] = useState("");
+  const [inventoryViewCategoryFilter, setInventoryViewCategoryFilter] = useState("All");
   const [showInventoryForm, setShowInventoryForm] = useState(false);
   const [inventoryForm, setInventoryForm] = useState({
     inventoryCategory: "",
     newInventoryCategory: "",
+    inventoryGroup: "",
+    inventoryItemCategory: "",
     inventoryName: "",
     inventoryCount: "",
     preferredCount: "",
@@ -175,6 +292,9 @@ function App() {
   const isAuthenticated = Boolean(token && currentUser);
   const isManager = currentUser?.role === "Manager";
   const canManageWorkspace = currentUser?.role === "Manager" || currentUser?.role === "Active Manager";
+  const editingStoreInventoryItem = editingStoreInventoryId
+    ? storeInventory.find((entry) => Number(entry.id) === Number(editingStoreInventoryId)) || null
+    : null;
 
   const tabHeading = useMemo(() => {
     const item = navItems.find((entry) => entry.key === activeTab);
@@ -211,6 +331,94 @@ function App() {
     return ["All", ...Array.from(set).sort((a, b) => a.localeCompare(b))];
   }, [cumulativeInventory]);
 
+  const selectedInventoryCategoryDefinition = useMemo(() => {
+    return inventoryCategories.find((category) => category.name === inventoryForm.inventoryCategory) || null;
+  }, [inventoryCategories, inventoryForm.inventoryCategory]);
+
+  const selectedInventoryCategoryGroups = useMemo(() => {
+    return selectedInventoryCategoryDefinition?.groups || [];
+  }, [selectedInventoryCategoryDefinition]);
+
+  const selectedInventoryFormCategoryName = useMemo(() => {
+    if (inventoryForm.inventoryCategory === addCategoryValue) {
+      return String(inventoryForm.newInventoryCategory || "").trim();
+    }
+
+    return String(inventoryForm.inventoryCategory || "").trim();
+  }, [inventoryForm.inventoryCategory, inventoryForm.newInventoryCategory]);
+
+  const selectedInventoryFormGroupName = useMemo(() => {
+    return String(inventoryForm.inventoryGroup || "").trim();
+  }, [inventoryForm.inventoryGroup]);
+
+  const scopedInventoryFormList = useMemo(() => {
+    if (!selectedInventoryFormCategoryName) {
+      return storeInventory;
+    }
+
+    return storeInventory.filter((item) => {
+      if (String(item.inventoryCategory || "").trim() !== selectedInventoryFormCategoryName) {
+        return false;
+      }
+
+      if (!selectedInventoryFormGroupName) {
+        return true;
+      }
+
+      return String(item.inventoryGroup || "").trim() === selectedInventoryFormGroupName;
+    });
+  }, [storeInventory, selectedInventoryFormCategoryName, selectedInventoryFormGroupName]);
+
+  const scopedInventoryFormLabel = useMemo(() => {
+    return formatInventoryCategoryLabel(selectedInventoryFormCategoryName, selectedInventoryFormGroupName);
+  }, [selectedInventoryFormCategoryName, selectedInventoryFormGroupName]);
+
+  const inventoryViewCategoryOptions = useMemo(() => {
+    const values = new Set(
+      scopedInventoryFormList
+        .map((item) => formatInventoryCategoryLabel(item.inventoryCategory, item.inventoryGroup))
+        .filter(Boolean)
+    );
+
+    return ["All", ...Array.from(values).sort((a, b) => a.localeCompare(b))];
+  }, [scopedInventoryFormList]);
+
+  const filteredScopedInventoryFormList = useMemo(() => {
+    const query = inventoryViewSearch.trim().toLowerCase();
+
+    return scopedInventoryFormList
+      .filter((item) => {
+        const categoryLabel = formatInventoryCategoryLabel(item.inventoryCategory, item.inventoryGroup);
+        if (inventoryViewCategoryFilter !== "All" && categoryLabel !== inventoryViewCategoryFilter) {
+          return false;
+        }
+
+        if (!query) {
+          return true;
+        }
+
+        const searchable = [
+          item.inventoryName,
+          item.inventoryCategory,
+          item.inventoryGroup,
+          item.inventoryItemCategory
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+
+        return searchable.includes(query);
+      })
+      .sort((a, b) => String(a.inventoryName || "").localeCompare(String(b.inventoryName || "")));
+  }, [scopedInventoryFormList, inventoryViewSearch, inventoryViewCategoryFilter]);
+
+  const dailyPostCategoryOptions = useMemo(() => {
+    return dailyPostCategories.map((category) => ({
+      value: category.name,
+      label: category.name
+    }));
+  }, [dailyPostCategories]);
+
   const filteredCumulativeInventory = useMemo(() => {
     const base =
       allInventoryCategory === "All"
@@ -220,21 +428,31 @@ function App() {
     return [...base].sort((a, b) => String(a.inventoryName).localeCompare(String(b.inventoryName)));
   }, [allInventoryCategory, cumulativeInventory]);
 
+  const cumulativeInventoryStoreColumns = cumulativeStores.length > 0 ? cumulativeStores : stores;
+
+  const editingCumulativeInventoryItem = editingInventoryKey
+    ? cumulativeInventory.find((item) => {
+        const rowKey = buildInventoryItemKey(item.inventoryCategory, item.inventoryGroup, item.inventoryItemCategory, item.inventoryName);
+        return rowKey === editingInventoryKey;
+      }) || null
+    : null;
+
   const overviewScopedInventoryRows = useMemo(() => {
+    const visibleStoreIds =
+      overviewSelectedStoreId === "all"
+        ? stores.map((store) => String(store.id))
+        : [String(overviewSelectedStoreId)];
+
     const rows = cumulativeInventory.map((item) => {
-      const preferredCount = Number(item.cumulativePreferredCount || 0);
-      const visibleCount =
-        overviewSelectedStoreId === "all"
-          ? Number(item.cumulativeCount || 0)
-          : Number(item.countsByStore?.[String(overviewSelectedStoreId)] || 0);
-      const shortage = Math.max(preferredCount - visibleCount, 0);
+      const scopeStats = getInventoryScopeStats(item, visibleStoreIds);
       return {
         inventoryName: item.inventoryName,
         inventoryCategory: item.inventoryCategory,
-        visibleCount,
-        preferredCount,
-        shortage,
-        status: shortage > 0 ? "Needs attention" : "Healthy"
+        inventoryGroup: item.inventoryGroup || "",
+        visibleCount: scopeStats.visibleCount,
+        preferredCount: scopeStats.preferredCount,
+        shortage: scopeStats.shortage,
+        status: scopeStats.shortage > 0 ? "Needs attention" : "Healthy"
       };
     });
 
@@ -244,7 +462,7 @@ function App() {
       }
       return String(a.inventoryName).localeCompare(String(b.inventoryName));
     });
-  }, [cumulativeInventory, overviewSelectedStoreId]);
+  }, [cumulativeInventory, overviewSelectedStoreId, stores]);
 
   const overviewInventoryRows = useMemo(() => {
     const filtered =
@@ -291,17 +509,14 @@ function App() {
 
     const totalUnits = cumulativeInventory.reduce((sum, item) => {
       if (overviewSelectedStoreId === "all") {
-        return sum + Number(item.cumulativeCount || 0);
+        return sum + sumInventoryCounts(item, visibleStoreIds);
       }
       return sum + Number(item.countsByStore?.[String(overviewSelectedStoreId)] || 0);
     }, 0);
 
     const lowStockCount = cumulativeInventory.reduce((sum, item) => {
-      const visibleCount =
-        overviewSelectedStoreId === "all"
-          ? Number(item.cumulativeCount || 0)
-          : Number(item.countsByStore?.[String(overviewSelectedStoreId)] || 0);
-      return visibleCount < Number(item.cumulativePreferredCount || 0) ? sum + 1 : sum;
+      const scopeStats = getInventoryScopeStats(item, visibleStoreIds);
+      return scopeStats.shortage > 0 ? sum + 1 : sum;
     }, 0);
 
     const activePeople = new Set(
@@ -387,7 +602,7 @@ function App() {
   const storeInventoryCategories = useMemo(() => {
     const values = new Set(
       storeInventory
-        .map((item) => String(item.inventoryCategory || "").trim())
+        .map((item) => formatInventoryCategoryLabel(item.inventoryCategory, item.inventoryGroup))
         .filter(Boolean)
     );
     return ["All", ...Array.from(values).sort((a, b) => a.localeCompare(b))];
@@ -397,7 +612,8 @@ function App() {
     const query = storeInventorySearch.trim().toLowerCase();
     return storeInventory
       .filter((item) => {
-        if (storeInventoryCategoryFilter !== "All" && item.inventoryCategory !== storeInventoryCategoryFilter) {
+        const categoryLabel = formatInventoryCategoryLabel(item.inventoryCategory, item.inventoryGroup);
+        if (storeInventoryCategoryFilter !== "All" && categoryLabel !== storeInventoryCategoryFilter) {
           return false;
         }
 
@@ -417,7 +633,10 @@ function App() {
           return true;
         }
 
-        const searchable = [item.inventoryName, item.inventoryCategory].filter(Boolean).join(" ").toLowerCase();
+        const searchable = [item.inventoryName, item.inventoryCategory, item.inventoryGroup, item.inventoryItemCategory]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
         return searchable.includes(query);
       })
       .sort((a, b) => {
@@ -442,6 +661,15 @@ function App() {
       return initialValue !== draftValue;
     });
   }, [dailyPostInventoryItems, dailyPostInitialCounts, dailyPostDraftCounts]);
+
+  const hasPendingDailyPostProgress = useMemo(() => {
+    return (
+      hasDailyPostDraftChanges ||
+      dailyPostStep !== "setup" ||
+      dailyPostInventoryItems.length > 0 ||
+      Boolean(dailyPostCategory)
+    );
+  }, [hasDailyPostDraftChanges, dailyPostStep, dailyPostInventoryItems.length, dailyPostCategory]);
 
   const dailyPostStoreLabel = useMemo(() => {
     if (!dailyPostStoreId) {
@@ -662,11 +890,30 @@ function App() {
     setCumulativeStores([]);
     setSelectedCumulativeStoreIds([]);
     setEditingInventoryKey("");
+    setEditInventoryForm({
+      inventoryCategory: "",
+      inventoryGroup: "",
+      inventoryName: "",
+      preferredCount: "0",
+      editStoreId: "all",
+      deleteStoreId: "all"
+    });
     setStoreInventory([]);
     setStoreInventorySearch("");
     setStoreInventoryCategoryFilter("All");
     setStoreInventoryHealthFilter("all");
+    setInventoryViewSearch("");
+    setInventoryViewCategoryFilter("All");
     setInventoryCategories([]);
+    setInventoryForm({
+      inventoryCategory: "",
+      newInventoryCategory: "",
+      inventoryGroup: "",
+      inventoryName: "",
+      inventoryCount: "",
+      preferredCount: "",
+      addToAllStores: false
+    });
     setShowInventoryForm(false);
     setShowDailyPostModal(false);
     setDailyPostStep("setup");
@@ -912,18 +1159,43 @@ function App() {
   };
 
   const onStartEditInventory = (item) => {
-    const key = `${item.inventoryCategory}::${item.inventoryName}`;
+    const selectedStoreId =
+      selectedCumulativeStoreIds.length === 1
+        ? String(selectedCumulativeStoreIds[0])
+        : "";
+    const fallbackStoreId = Object.keys(item.preferredByStore || {})[0] || "";
+    const scopedStoreId = selectedStoreId && Object.prototype.hasOwnProperty.call(item.preferredByStore || {}, selectedStoreId)
+      ? selectedStoreId
+      : fallbackStoreId;
+    const scopedPreferredCount = Number(item.preferredByStore?.[String(scopedStoreId)] || 0);
+
+    const key = buildInventoryItemKey(item.inventoryCategory, item.inventoryGroup, item.inventoryItemCategory, item.inventoryName);
     setEditingInventoryKey(key);
     setEditInventoryForm({
       inventoryCategory: item.inventoryCategory,
+      inventoryGroup: item.inventoryGroup || "",
+      inventoryItemCategory: item.inventoryItemCategory || "",
       inventoryName: item.inventoryName,
-      preferredCount: String(item.cumulativePreferredCount)
+      preferredCount: String(scopedPreferredCount),
+      editStoreId: scopedStoreId || "all",
+      deleteStoreId: scopedStoreId || "all"
     });
   };
 
   const onEditInventoryFormChange = (event) => {
     const { name, value } = event.target;
     setEditInventoryForm((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const onEditInventoryScopeChange = (item, nextStoreId) => {
+    setEditInventoryForm((prev) => ({
+      ...prev,
+      editStoreId: nextStoreId,
+      preferredCount:
+        nextStoreId === "all"
+          ? prev.preferredCount
+          : String(Number(item.preferredByStore?.[String(nextStoreId)] || 0))
+    }));
   };
 
   const loadDailyPostCategories = async (storeId) => {
@@ -981,8 +1253,10 @@ function App() {
   };
 
   const onCloseDailyPostModal = () => {
-    if (hasDailyPostDraftChanges) {
-      const confirmed = window.confirm("Close daily post and discard current entries?");
+    if (hasPendingDailyPostProgress) {
+      const confirmed = window.confirm(
+        "Close daily post? Any entries you started are not saved until you review and submit them."
+      );
       if (!confirmed) {
         return;
       }
@@ -1031,8 +1305,10 @@ function App() {
 
     setLoadingDailyPostItems(true);
     try {
+      const searchParams = new URLSearchParams({ category: dailyPostCategory });
+
       const response = await api.get(
-        `/api/stores/${dailyPostStoreId}/inventory?category=${encodeURIComponent(dailyPostCategory)}`
+        `/api/stores/${dailyPostStoreId}/inventory?${searchParams.toString()}`
       );
       const items = response.data.inventory || [];
 
@@ -1131,17 +1407,72 @@ function App() {
     try {
       const payload = {
         inventoryCategory: item.inventoryCategory,
+        inventoryGroup: item.inventoryGroup || null,
+        inventoryItemCategory: item.inventoryItemCategory || null,
         inventoryName: item.inventoryName,
         newInventoryCategory: editInventoryForm.inventoryCategory,
+        newInventoryGroup: editInventoryForm.inventoryGroup.trim() || null,
+        newInventoryItemCategory: editInventoryForm.inventoryItemCategory.trim() || null,
         newInventoryName: editInventoryForm.inventoryName,
-        preferredCount: Number(editInventoryForm.preferredCount)
+        preferredCount: Number(editInventoryForm.preferredCount),
+        storeId: editInventoryForm.editStoreId === "all" ? null : Number(editInventoryForm.editStoreId)
       };
       const response = await api.patch("/api/inventory/cumulative", payload);
       setMessage(response.data.message);
       setEditingInventoryKey("");
-      await Promise.all([loadCumulativeInventory(), loadInventoryCategories()]);
+      const reloadTasks = [loadCumulativeInventory(), loadInventoryCategories()];
+      if (selectedStore?.id) {
+        reloadTasks.push(loadStoreInventory(selectedStore.id));
+      }
+      await Promise.all(reloadTasks);
     } catch (error) {
       setMessage(error?.response?.data?.message || "Could not update inventory.");
+    }
+  };
+
+  const onDeleteInventory = async (item, storeOptions) => {
+    const rowKey = buildInventoryItemKey(item.inventoryCategory, item.inventoryGroup, item.inventoryItemCategory, item.inventoryName);
+    const targetStoreId = editInventoryForm.deleteStoreId;
+    const scopedStore =
+      targetStoreId === "all"
+        ? null
+        : storeOptions.find((store) => String(store.id) === String(targetStoreId)) || null;
+
+    const scopeLabel = scopedStore
+      ? `${scopedStore.name} #${scopedStore.officeNumber}`
+      : "all stores";
+
+    const confirmed = window.confirm(
+      `Delete \"${item.inventoryName}\" from ${scopeLabel}? This cannot be undone.`
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setDeletingInventoryKey(rowKey);
+    try {
+      const response = await api.delete("/api/inventory/cumulative", {
+        data: {
+          inventoryCategory: item.inventoryCategory,
+          inventoryGroup: item.inventoryGroup || null,
+          inventoryItemCategory: item.inventoryItemCategory || null,
+          inventoryName: item.inventoryName,
+          storeId: scopedStore ? scopedStore.id : null
+        }
+      });
+
+      setMessage(response.data.message);
+      setEditingInventoryKey("");
+      const reloadTasks = [loadCumulativeInventory(), loadInventoryCategories()];
+      if (selectedStore?.id) {
+        reloadTasks.push(loadStoreInventory(selectedStore.id));
+      }
+      await Promise.all(reloadTasks);
+    } catch (error) {
+      setMessage(error?.response?.data?.message || "Could not delete inventory.");
+    } finally {
+      setDeletingInventoryKey("");
     }
   };
 
@@ -1161,6 +1492,8 @@ function App() {
 
       const payload = {
         inventoryCategory: selectedCategory,
+        inventoryGroup: inventoryForm.inventoryGroup.trim() || null,
+        inventoryItemCategory: inventoryForm.inventoryItemCategory.trim() || null,
         inventoryName: inventoryForm.inventoryName,
         inventoryCount:
           inventoryForm.inventoryCount === "" ? null : Number(inventoryForm.inventoryCount),
@@ -1172,6 +1505,8 @@ function App() {
       setInventoryForm({
         inventoryCategory: "",
         newInventoryCategory: "",
+        inventoryGroup: "",
+        inventoryItemCategory: "",
         inventoryName: "",
         inventoryCount: "",
         preferredCount: "",
@@ -1182,6 +1517,157 @@ function App() {
       setMessage(response.data.message);
     } catch (error) {
       setMessage(error?.response?.data?.message || "Could not add inventory item.");
+    }
+  };
+
+  const onStartEditStoreInventory = (item) => {
+    setEditingStoreInventoryId(item.id);
+    setStoreInventoryEditForm({
+      inventoryCategory: item.inventoryCategory || "",
+      inventoryGroup: item.inventoryGroup || "",
+      inventoryItemCategory: item.inventoryItemCategory || "",
+      inventoryName: item.inventoryName || "",
+      inventoryCount: String(item.inventoryCount ?? 0),
+      preferredCount: String(item.preferredCount ?? 0),
+      updateScope: "current",
+      deleteScope: "current"
+    });
+  };
+
+  const onStoreInventoryEditFormChange = (event) => {
+    const { name, value } = event.target;
+    setStoreInventoryEditForm((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const onCancelEditStoreInventory = () => {
+    setEditingStoreInventoryId(null);
+    setSavingStoreInventoryId(null);
+    setDeletingStoreInventoryId(null);
+    setStoreInventoryEditForm({
+      inventoryCategory: "",
+      inventoryGroup: "",
+      inventoryName: "",
+      inventoryCount: "0",
+      preferredCount: "0",
+      updateScope: "current",
+      deleteScope: "current"
+    });
+  };
+
+  const onSaveStoreInventoryEdit = async (itemId) => {
+    if (!selectedStore?.id) {
+      return;
+    }
+
+    if (!storeInventoryEditForm.inventoryCategory.trim() || !storeInventoryEditForm.inventoryName.trim()) {
+      setMessage("Category and inventory name are required.");
+      return;
+    }
+
+    if (Number.isNaN(Number(storeInventoryEditForm.preferredCount))) {
+      setMessage("Preferred count must be a number.");
+      return;
+    }
+
+    if (
+      storeInventoryEditForm.updateScope === "current" &&
+      Number.isNaN(Number(storeInventoryEditForm.inventoryCount))
+    ) {
+      setMessage("Inventory count and preferred count must be numbers.");
+      return;
+    }
+
+    setSavingStoreInventoryId(itemId);
+    try {
+      const existingItem = storeInventory.find((entry) => entry.id === itemId);
+      if (!existingItem) {
+        setMessage("Inventory item not found.");
+        setSavingStoreInventoryId(null);
+        return;
+      }
+
+      let response;
+      if (storeInventoryEditForm.updateScope === "all") {
+        response = await api.patch("/api/inventory/cumulative", {
+          inventoryCategory: existingItem.inventoryCategory,
+          inventoryGroup: existingItem.inventoryGroup || null,
+          inventoryItemCategory: existingItem.inventoryItemCategory || null,
+          inventoryName: existingItem.inventoryName,
+          newInventoryCategory: storeInventoryEditForm.inventoryCategory.trim(),
+          newInventoryGroup: storeInventoryEditForm.inventoryGroup.trim() || null,
+          newInventoryItemCategory: storeInventoryEditForm.inventoryItemCategory.trim() || null,
+          newInventoryName: storeInventoryEditForm.inventoryName.trim(),
+          preferredCount: Number(storeInventoryEditForm.preferredCount),
+          storeId: null
+        });
+      } else {
+        response = await api.patch(`/api/stores/${selectedStore.id}/inventory/${itemId}`, {
+          inventoryCategory: storeInventoryEditForm.inventoryCategory.trim(),
+          inventoryGroup: storeInventoryEditForm.inventoryGroup.trim() || null,
+          inventoryItemCategory: storeInventoryEditForm.inventoryItemCategory.trim() || null,
+          inventoryName: storeInventoryEditForm.inventoryName.trim(),
+          inventoryCount: Number(storeInventoryEditForm.inventoryCount),
+          preferredCount: Number(storeInventoryEditForm.preferredCount)
+        });
+      }
+
+      setMessage(response?.data?.message || "Inventory item updated.");
+      onCancelEditStoreInventory();
+      await Promise.all([
+        loadStoreInventory(selectedStore.id),
+        loadCumulativeInventory(),
+        loadInventoryCategories()
+      ]);
+    } catch (error) {
+      setMessage(error?.response?.data?.message || "Could not update inventory item.");
+      setSavingStoreInventoryId(null);
+    }
+  };
+
+  const onDeleteStoreInventoryFromEdit = async (itemId) => {
+    if (!selectedStore?.id) {
+      return;
+    }
+
+    const existingItem = storeInventory.find((entry) => entry.id === itemId);
+    if (!existingItem) {
+      setMessage("Inventory item not found.");
+      return;
+    }
+
+    const deletingAllStores = storeInventoryEditForm.deleteScope === "all";
+    const scopeLabel = deletingAllStores ? "all stores" : `${selectedStore.name} #${selectedStore.officeNumber}`;
+
+    const confirmed = window.confirm(
+      `Delete \"${existingItem.inventoryName}\" from ${scopeLabel}? This cannot be undone.`
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setDeletingStoreInventoryId(itemId);
+    try {
+      const response = await api.delete("/api/inventory/cumulative", {
+        data: {
+          inventoryCategory: existingItem.inventoryCategory,
+          inventoryGroup: existingItem.inventoryGroup || null,
+          inventoryItemCategory: existingItem.inventoryItemCategory || null,
+          inventoryName: existingItem.inventoryName,
+          storeId: deletingAllStores ? null : selectedStore.id
+        }
+      });
+
+      setMessage(response?.data?.message || "Inventory item deleted.");
+      onCancelEditStoreInventory();
+      await Promise.all([
+        loadStoreInventory(selectedStore.id),
+        loadCumulativeInventory(),
+        loadInventoryCategories()
+      ]);
+    } catch (error) {
+      setMessage(error?.response?.data?.message || "Could not delete inventory item.");
+      setDeletingStoreInventoryId(null);
     }
   };
 
@@ -1383,7 +1869,7 @@ function App() {
                           ? Math.max((item.shortage / overviewRadarData.maxShortage) * 100, 6)
                           : 0;
                         return (
-                          <div key={`${item.inventoryCategory}:${item.inventoryName}`} className="radar-bar-row">
+                          <div key={buildInventoryItemKey(item.inventoryCategory, item.inventoryGroup, item.inventoryItemCategory, item.inventoryName)} className="radar-bar-row">
                             <div className="radar-bar-labels">
                               <span>{item.inventoryName}</span>
                               <strong>{item.shortage}</strong>
@@ -1428,11 +1914,12 @@ function App() {
 
                 <div className="radar-insight-list" aria-label="Stock health item details">
                   {overviewInventoryRows.slice(0, 8).map((item) => (
-                    <article key={`${item.inventoryCategory}:${item.inventoryName}`} className="radar-insight-card">
+                    <article key={buildInventoryItemKey(item.inventoryCategory, item.inventoryGroup, item.inventoryItemCategory, item.inventoryName)} className="radar-insight-card">
                       <div className="radar-insight-head">
                         <div>
                           <p className="radar-item-name">{item.inventoryName}</p>
-                          <p className="radar-item-category">{item.inventoryCategory}</p>
+                          <p className="radar-item-category">{formatInventoryCategoryLabel(item.inventoryCategory, item.inventoryGroup)}</p>
+                          <p className="radar-item-subcategory">{formatInventoryItemCategoryLabel(item.inventoryItemCategory)}</p>
                         </div>
                         <span className={item.shortage > 0 ? "status-chip danger" : "status-chip good"}>
                           {item.status}
@@ -1585,7 +2072,15 @@ function App() {
                 <p className="section-title icon-text"><UIIcon name="inventory" />All Inventory</p>
                 <p className="section-sub">Cumulative inventory for your accessible stores.</p>
               </div>
-              <button type="button" className="signout-btn" onClick={() => setStoreView("detail")}>
+              <button
+                type="button"
+                className="signout-btn"
+                onClick={() => {
+                  setInventoryViewSearch("");
+                  setInventoryViewCategoryFilter("All");
+                  setStoreView("detail");
+                }}
+              >
                 Back to Store
               </button>
             </div>
@@ -1662,49 +2157,48 @@ function App() {
                         <th key={store.id}>{store.name} #{store.officeNumber}</th>
                       ))}
                       <th>Cumulative</th>
+                      <th>Preferred</th>
                       {canManageWorkspace && <th>Action</th>}
                     </tr>
                   </thead>
                   <tbody>
                     {filteredCumulativeInventory.map((item) => {
-                      const rowKey = `${item.inventoryCategory}::${item.inventoryName}`;
-                      const isEditing = editingInventoryKey === rowKey;
+                      const rowKey = buildInventoryItemKey(item.inventoryCategory, item.inventoryGroup, item.inventoryItemCategory, item.inventoryName);
+                      const deleteStoreOptions = storeColumns.filter((store) =>
+                        Object.prototype.hasOwnProperty.call(item.countsByStore || {}, String(store.id))
+                      );
+                      const visibleCountTotal = visibleStoreColumns.reduce(
+                        (sum, store) => sum + Number(item.countsByStore?.[String(store.id)] || 0),
+                        0
+                      );
+                      const visiblePreferredTotal = visibleStoreColumns.reduce(
+                        (sum, store) => sum + Number(item.preferredByStore?.[String(store.id)] || 0),
+                        0
+                      );
                       return (
                         <tr key={rowKey}>
                           <td>
-                            {isEditing ? (
-                              <input
-                                name="inventoryName"
-                                value={editInventoryForm.inventoryName}
-                                onChange={onEditInventoryFormChange}
-                              />
-                            ) : (
-                              item.inventoryName
-                            )}
+                            <div className="inventory-name-stack">
+                              <span>{item.inventoryName}</span>
+                              <p className="tiny">{formatInventoryCategoryLabel(item.inventoryCategory, item.inventoryGroup)}</p>
+                              <p className="tiny">{formatInventoryItemCategoryLabel(item.inventoryItemCategory)}</p>
+                            </div>
                           </td>
                           {visibleStoreColumns.map((store) => {
                             const count = Number(item.countsByStore?.[String(store.id)] ?? 0);
                             return <td key={store.id}>{count}</td>;
                           })}
                           <td>
-                            {Number(item.cumulativeCount || 0)}
+                            {visibleCountTotal}
+                          </td>
+                          <td>
+                            {visiblePreferredTotal}
                           </td>
                           {canManageWorkspace && (
                             <td>
-                              {isEditing ? (
-                                <div className="table-actions">
-                                  <button type="button" className="action-btn" onClick={() => onSaveEditInventory(item)}>
-                                    Save
-                                  </button>
-                                  <button type="button" className="signout-btn" onClick={() => setEditingInventoryKey("")}>
-                                    Cancel
-                                  </button>
-                                </div>
-                              ) : (
-                                <button type="button" className="action-btn" onClick={() => onStartEditInventory(item)}>
-                                  Edit
-                                </button>
-                              )}
+                              <button type="button" className="action-btn" onClick={() => onStartEditInventory(item)}>
+                                Edit
+                              </button>
                             </td>
                           )}
                         </tr>
@@ -1738,7 +2232,7 @@ function App() {
                 className="action-btn"
                 onClick={() => {
                   setStoreView("all-inventory");
-                  setSelectedCumulativeStoreIds(preferredMainStoreId ? [preferredMainStoreId] : []);
+                  setSelectedCumulativeStoreIds(selectedStore?.id ? [String(selectedStore.id)] : []);
                 }}
               >
                 All Inventory
@@ -1787,6 +2281,32 @@ function App() {
                     />
                   </label>
                 )}
+                <label>
+                  Group Inside Category
+                  <input
+                    name="inventoryGroup"
+                    value={inventoryForm.inventoryGroup}
+                    onChange={onInventoryFormChange}
+                    list={selectedInventoryCategoryGroups.length > 0 ? "inventory-group-options" : undefined}
+                    placeholder="Optional: Apple, Samsung, Motorola"
+                  />
+                  {selectedInventoryCategoryGroups.length > 0 && (
+                    <datalist id="inventory-group-options">
+                      {selectedInventoryCategoryGroups.map((group) => (
+                        <option key={group} value={group} />
+                      ))}
+                    </datalist>
+                  )}
+                </label>
+                <label>
+                  Item Category (Optional)
+                  <input
+                    name="inventoryItemCategory"
+                    value={inventoryForm.inventoryItemCategory}
+                    onChange={onInventoryFormChange}
+                    placeholder="Optional: Men's, Women's, Kids"
+                  />
+                </label>
                 <label>
                   Inventory Name
                   <input
@@ -1838,18 +2358,116 @@ function App() {
             )}
 
             {!loadingStoreInventory && storeInventory.length > 0 && (
-              <ul className="data-list">
-                {storeInventory.map((item) => (
-                  <li key={item.id} className="data-item">
-                    <div className="item-head">
-                      <strong>{item.inventoryName}</strong>
-                      <span>{item.inventoryCount}</span>
-                    </div>
-                    <p>Category: {item.inventoryCategory}</p>
-                    <p>Preferred Count: {item.preferredCount}</p>
-                  </li>
-                ))}
-              </ul>
+              <section className="section-block">
+                <div className="section-row compact">
+                  <div>
+                    <p className="section-title icon-text"><UIIcon name="tag" />Inventory in View</p>
+                    <p className="section-sub">
+                      {selectedInventoryFormCategoryName
+                        ? `Showing ${scopedInventoryFormList.length} item(s) in ${scopedInventoryFormLabel}`
+                        : `Showing all ${storeInventory.length} item(s) in this store`}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="overview-filter-grid store-inventory-filter-grid">
+                  <label>
+                    <span className="icon-text"><UIIcon name="search" />Search Inventory</span>
+                    <input
+                      type="text"
+                      value={inventoryViewSearch}
+                      onChange={(event) => setInventoryViewSearch(event.target.value)}
+                      placeholder="Search item, category, group, or item category"
+                    />
+                  </label>
+
+                  <label>
+                    <span className="icon-text"><UIIcon name="tag" />Category</span>
+                    <select
+                      value={inventoryViewCategoryFilter}
+                      onChange={(event) => setInventoryViewCategoryFilter(event.target.value)}
+                    >
+                      {inventoryViewCategoryOptions.map((category) => (
+                        <option key={category} value={category}>{category}</option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <div className="table-actions inventory-view-filter-actions">
+                    <button
+                      type="button"
+                      className="signout-btn"
+                      onClick={() => {
+                        setInventoryViewSearch("");
+                        setInventoryViewCategoryFilter("All");
+                      }}
+                      disabled={!inventoryViewSearch && inventoryViewCategoryFilter === "All"}
+                    >
+                      Clear Filters
+                    </button>
+                  </div>
+                </div>
+
+                <p className="tiny">
+                  Showing {filteredScopedInventoryFormList.length} of {scopedInventoryFormList.length} items
+                </p>
+
+                {filteredScopedInventoryFormList.length === 0 ? (
+                  <article className="empty-state-card compact-empty-state">
+                    <h3>No items in this category yet</h3>
+                    <p>Try a different search or category filter, or save a new item to create the first row here.</p>
+                  </article>
+                ) : (
+                  <div className="table-wrap store-snapshot-wrap">
+                    <table className="inventory-table inventory-table-compact">
+                      <thead>
+                        <tr>
+                          <th>Category</th>
+                          <th>Inventory Name</th>
+                          <th>Inventory Count</th>
+                          <th>Preferred Count</th>
+                          <th>Status</th>
+                          {canManageWorkspace && <th>Action</th>}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredScopedInventoryFormList.map((item) => {
+                          const shortage = Math.max(Number(item.preferredCount || 0) - Number(item.inventoryCount || 0), 0);
+                          return (
+                            <tr key={item.id}>
+                              <td data-label="Category">{formatInventoryCategoryLabel(item.inventoryCategory, item.inventoryGroup)}</td>
+                              <td data-label="Inventory Name">
+                                <div className="inventory-name-stack">
+                                  <span>{item.inventoryName}</span>
+                                  <p className="tiny">{formatInventoryItemCategoryLabel(item.inventoryItemCategory)}</p>
+                                </div>
+                              </td>
+                              <td data-label="Inventory Count">{item.inventoryCount}</td>
+                              <td data-label="Preferred Count">{item.preferredCount}</td>
+                              <td data-label="Status">
+                                <span className={shortage > 0 ? "status-chip danger" : "status-chip good"}>
+                                  {shortage > 0 ? `Gap ${shortage}` : "Healthy"}
+                                </span>
+                              </td>
+                              {canManageWorkspace && (
+                                <td data-label="Action">
+                                  <button
+                                    type="button"
+                                    className="action-btn"
+                                    onClick={() => onStartEditStoreInventory(item)}
+                                  >
+                                    Edit
+                                  </button>
+                                </td>
+                              )}
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
             )}
           </section>
         );
@@ -1868,12 +2486,20 @@ function App() {
                 className="action-btn"
                 onClick={() => {
                   setStoreView("all-inventory");
-                  setSelectedCumulativeStoreIds(preferredMainStoreId ? [preferredMainStoreId] : []);
+                  setSelectedCumulativeStoreIds(selectedStore?.id ? [String(selectedStore.id)] : []);
                 }}
               >
                 All Inventory
               </button>
-              <button type="button" className="signout-btn" onClick={() => setSelectedStore(null)}>
+              <button
+                type="button"
+                className="signout-btn"
+                onClick={() => {
+                  setInventoryViewSearch("");
+                  setInventoryViewCategoryFilter("All");
+                  setSelectedStore(null);
+                }}
+              >
                 Back to Stores
               </button>
             </div>
@@ -1887,6 +2513,8 @@ function App() {
                 type="button"
                 className="action-btn"
                 onClick={() => {
+                    setInventoryViewSearch("");
+                    setInventoryViewCategoryFilter("All");
                   setStoreView("inventory");
                   setShowInventoryForm(false);
                     setStoreInventorySearch("");
@@ -1918,7 +2546,7 @@ function App() {
                     type="text"
                     value={storeInventorySearch}
                     onChange={(event) => setStoreInventorySearch(event.target.value)}
-                    placeholder="Search item or category"
+                    placeholder="Search item, item category, or category"
                   />
                 </label>
 
@@ -1974,8 +2602,13 @@ function App() {
                     const shortage = Math.max(Number(item.preferredCount || 0) - Number(item.inventoryCount || 0), 0);
                     return (
                     <tr key={item.id}>
-                      <td data-label="Category">{item.inventoryCategory}</td>
-                      <td data-label="Inventory Name">{item.inventoryName}</td>
+                      <td data-label="Category">{formatInventoryCategoryLabel(item.inventoryCategory, item.inventoryGroup)}</td>
+                      <td data-label="Inventory Name">
+                        <div className="inventory-name-stack">
+                          <span>{item.inventoryName}</span>
+                          <p className="tiny">{formatInventoryItemCategoryLabel(item.inventoryItemCategory)}</p>
+                        </div>
+                      </td>
                       <td data-label="Inventory Count">{item.inventoryCount}</td>
                       <td data-label="Preferred Count">{item.preferredCount}</td>
                       <td data-label="Status">
@@ -2051,6 +2684,7 @@ function App() {
                   onClick={() => {
                     setSelectedStore(store);
                     setStoreView("detail");
+                    setOverviewSelectedStoreId(String(store.id));
                     setStoreInventorySearch("");
                     setStoreInventoryCategoryFilter("All");
                     setStoreInventoryHealthFilter("all");
@@ -2271,6 +2905,8 @@ function App() {
         latestGroup.items.push({
           id: post.id,
           inventoryCategory: post.inventoryCategory,
+          inventoryGroup: post.inventoryGroup,
+          inventoryItemCategory: post.inventoryItemCategory,
           inventoryName: post.inventoryName,
           postedCount: post.postedCount
         });
@@ -2288,6 +2924,8 @@ function App() {
             {
               id: post.id,
               inventoryCategory: post.inventoryCategory,
+              inventoryGroup: post.inventoryGroup,
+              inventoryItemCategory: post.inventoryItemCategory,
               inventoryName: post.inventoryName,
               postedCount: post.postedCount
             }
@@ -2378,7 +3016,10 @@ function App() {
                     <div className="feed-items">
                       {group.items.map((entry) => (
                         <div key={entry.id} className="feed-line">
-                          <span>{entry.inventoryCategory}: {entry.inventoryName}</span>
+                          <span>
+                            {formatInventoryCategoryLabel(entry.inventoryCategory, entry.inventoryGroup)}: {entry.inventoryName}
+                            {entry.inventoryItemCategory ? ` / ${formatInventoryItemCategoryLabel(entry.inventoryItemCategory)}` : ""}
+                          </span>
                           <strong>{entry.postedCount}</strong>
                         </div>
                       ))}
@@ -2425,8 +3066,8 @@ function App() {
                       disabled={!dailyPostStoreId}
                     >
                       <option value="">Select category</option>
-                      {dailyPostCategories.map((category) => (
-                        <option key={category.name} value={category.name}>{category.name}</option>
+                      {dailyPostCategoryOptions.map((category) => (
+                        <option key={category.value} value={category.value}>{category.label}</option>
                       ))}
                     </select>
                     {loadingDailyPostCategories && <LoadingIndicator label="Loading categories..." inline compact />}
@@ -2452,7 +3093,8 @@ function App() {
                   <article className="post-flow-card">
                     <p className="tiny">Phone Name</p>
                     <h3>{currentItem.inventoryName}</h3>
-                    <p className="tiny">Category: {currentItem.inventoryCategory}</p>
+                    <p className="tiny">Category: {formatInventoryCategoryLabel(currentItem.inventoryCategory, currentItem.inventoryGroup)}</p>
+                    <p className="tiny">Item Category: {formatInventoryItemCategoryLabel(currentItem.inventoryItemCategory)}</p>
                     <p className="tiny">Preferred: {currentItem.preferredCount}</p>
 
                     <label>
@@ -2498,6 +3140,7 @@ function App() {
                           <tr>
                             <th>Phone Name</th>
                             <th>Category</th>
+                            <th>Item Category</th>
                             <th>Preferred</th>
                             <th>Count</th>
                             <th>Action</th>
@@ -2507,7 +3150,8 @@ function App() {
                           {dailyPostInventoryItems.map((item, index) => (
                             <tr key={item.id}>
                               <td>{item.inventoryName}</td>
-                              <td>{item.inventoryCategory}</td>
+                              <td>{formatInventoryCategoryLabel(item.inventoryCategory, item.inventoryGroup)}</td>
+                              <td>{formatInventoryItemCategoryLabel(item.inventoryItemCategory)}</td>
                               <td>{item.preferredCount}</td>
                               <td>
                                 <input
@@ -2587,10 +3231,12 @@ function App() {
         <section className="dashboard-card" aria-label="Dashboard">
           <header className="dashboard-header">
             <div className="section-row">
-              <div>
-                <p className="eyebrow">Dashboard</p>
-                <h1>{tabHeading}</h1>
-              </div>
+              <BrandLockup
+                eyebrow="Manager's Must"
+                title={tabHeading}
+                subtitle="Calm operations for stores, teams, and daily posts"
+                compact
+              />
               {activeTab === "account" && (
                 <button type="button" className="signout-btn" onClick={() => onSignOut(true)}>
                   Sign Out
@@ -2645,6 +3291,282 @@ function App() {
             </button>
           ))}
         </nav>
+
+        {editingStoreInventoryItem && canManageWorkspace && (
+          <div className="modal-backdrop" role="presentation" onClick={onCancelEditStoreInventory}>
+            <section
+              className="modal-card inventory-edit-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Edit Inventory Item"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <header className="modal-header">
+                <div>
+                  <p className="section-title icon-text"><UIIcon name="edit" />Edit Inventory</p>
+                  <p className="section-sub">{editingStoreInventoryItem.inventoryName}</p>
+                </div>
+                <button type="button" className="signout-btn" onClick={onCancelEditStoreInventory}>
+                  Close
+                </button>
+              </header>
+
+              <div className="modal-body">
+                <div className="scope-alert-row">
+                  {storeInventoryEditForm.updateScope === "all" && (
+                    <span className="scope-chip warning">Update Scope: All Stores</span>
+                  )}
+                  {storeInventoryEditForm.deleteScope === "all" && (
+                    <span className="scope-chip danger">Delete Scope: All Stores</span>
+                  )}
+                </div>
+
+                <div className="overview-filter-grid">
+                  <label>
+                    <span className="icon-text"><UIIcon name="tag" />Category</span>
+                    <input
+                      name="inventoryCategory"
+                      value={storeInventoryEditForm.inventoryCategory}
+                      onChange={onStoreInventoryEditFormChange}
+                    />
+                  </label>
+                  <label>
+                    <span className="icon-text"><UIIcon name="stores" />Group</span>
+                    <input
+                      name="inventoryGroup"
+                      value={storeInventoryEditForm.inventoryGroup}
+                      onChange={onStoreInventoryEditFormChange}
+                      placeholder="Optional group"
+                    />
+                  </label>
+                  <label>
+                    <span className="icon-text"><UIIcon name="tag" />Item Category</span>
+                    <input
+                      name="inventoryItemCategory"
+                      value={storeInventoryEditForm.inventoryItemCategory}
+                      onChange={onStoreInventoryEditFormChange}
+                      placeholder="Optional item-specific category"
+                    />
+                  </label>
+                  <label>
+                    <span className="icon-text"><UIIcon name="inventory" />Inventory Name</span>
+                    <input
+                      name="inventoryName"
+                      value={storeInventoryEditForm.inventoryName}
+                      onChange={onStoreInventoryEditFormChange}
+                    />
+                  </label>
+                  <label>
+                    <span className="icon-text"><UIIcon name="inventory" />Inventory Count</span>
+                    <input
+                      type="number"
+                      min="0"
+                      name="inventoryCount"
+                      value={storeInventoryEditForm.inventoryCount}
+                      onChange={onStoreInventoryEditFormChange}
+                      disabled={storeInventoryEditForm.updateScope === "all"}
+                    />
+                  </label>
+                  <label>
+                    <span className="icon-text"><UIIcon name="check" />Preferred Count</span>
+                    <input
+                      type="number"
+                      min="0"
+                      name="preferredCount"
+                      value={storeInventoryEditForm.preferredCount}
+                      onChange={onStoreInventoryEditFormChange}
+                    />
+                  </label>
+                  <label>
+                    <span className="icon-text"><UIIcon name="activity" />Update For</span>
+                    <select
+                      name="updateScope"
+                      value={storeInventoryEditForm.updateScope}
+                      onChange={onStoreInventoryEditFormChange}
+                    >
+                      <option value="current">This store</option>
+                      <option value="all">All stores</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span className="icon-text"><UIIcon name="warning" />Delete From</span>
+                    <select
+                      name="deleteScope"
+                      value={storeInventoryEditForm.deleteScope}
+                      onChange={onStoreInventoryEditFormChange}
+                    >
+                      <option value="current">This store</option>
+                      <option value="all">All stores</option>
+                    </select>
+                  </label>
+                </div>
+
+                <div className="table-actions inventory-edit-modal-actions">
+                  <button
+                    type="button"
+                    className="action-btn"
+                    onClick={() => onSaveStoreInventoryEdit(editingStoreInventoryItem.id)}
+                    disabled={savingStoreInventoryId === editingStoreInventoryItem.id || deletingStoreInventoryId === editingStoreInventoryItem.id}
+                  >
+                    {savingStoreInventoryId === editingStoreInventoryItem.id ? "Saving..." : "Save"}
+                  </button>
+                  <button
+                    type="button"
+                    className="danger-btn"
+                    onClick={() => onDeleteStoreInventoryFromEdit(editingStoreInventoryItem.id)}
+                    disabled={savingStoreInventoryId === editingStoreInventoryItem.id || deletingStoreInventoryId === editingStoreInventoryItem.id}
+                  >
+                    {deletingStoreInventoryId === editingStoreInventoryItem.id ? "Deleting..." : "Delete"}
+                  </button>
+                  <button
+                    type="button"
+                    className="signout-btn"
+                    onClick={onCancelEditStoreInventory}
+                    disabled={savingStoreInventoryId === editingStoreInventoryItem.id || deletingStoreInventoryId === editingStoreInventoryItem.id}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </section>
+          </div>
+        )}
+
+        {editingCumulativeInventoryItem && canManageWorkspace && (
+          <div className="modal-backdrop" role="presentation" onClick={() => setEditingInventoryKey("")}>
+            <section
+              className="modal-card inventory-edit-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Edit Cumulative Inventory"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <header className="modal-header">
+                <div>
+                  <p className="section-title icon-text"><UIIcon name="edit" />Edit Inventory</p>
+                  <p className="section-sub">{editingCumulativeInventoryItem.inventoryName}</p>
+                </div>
+                <button type="button" className="signout-btn" onClick={() => setEditingInventoryKey("")}>
+                  Close
+                </button>
+              </header>
+
+              <div className="modal-body">
+                <div className="scope-alert-row">
+                  {editInventoryForm.editStoreId === "all" && (
+                    <span className="scope-chip warning">Update Scope: All Stores</span>
+                  )}
+                  {editInventoryForm.deleteStoreId === "all" && (
+                    <span className="scope-chip danger">Delete Scope: All Stores</span>
+                  )}
+                </div>
+
+                <div className="overview-filter-grid inventory-edit-fields">
+                  <label>
+                    <span className="icon-text"><UIIcon name="tag" />Category</span>
+                    <input
+                      name="inventoryCategory"
+                      value={editInventoryForm.inventoryCategory}
+                      onChange={onEditInventoryFormChange}
+                    />
+                  </label>
+                  <label>
+                    <span className="icon-text"><UIIcon name="stores" />Group</span>
+                    <input
+                      name="inventoryGroup"
+                      value={editInventoryForm.inventoryGroup}
+                      onChange={onEditInventoryFormChange}
+                      placeholder="Optional group"
+                    />
+                  </label>
+                  <label>
+                    <span className="icon-text"><UIIcon name="tag" />Item Category</span>
+                    <input
+                      name="inventoryItemCategory"
+                      value={editInventoryForm.inventoryItemCategory}
+                      onChange={onEditInventoryFormChange}
+                      placeholder="Optional item-specific category"
+                    />
+                  </label>
+                  <label>
+                    <span className="icon-text"><UIIcon name="inventory" />Inventory Name</span>
+                    <input
+                      name="inventoryName"
+                      value={editInventoryForm.inventoryName}
+                      onChange={onEditInventoryFormChange}
+                    />
+                  </label>
+                  <label>
+                    <span className="icon-text"><UIIcon name="check" />Preferred Count</span>
+                    <input
+                      type="number"
+                      min="0"
+                      name="preferredCount"
+                      value={editInventoryForm.preferredCount}
+                      onChange={onEditInventoryFormChange}
+                    />
+                  </label>
+                  <label>
+                    <span className="icon-text"><UIIcon name="activity" />Update For</span>
+                    <select
+                      name="editStoreId"
+                      value={editInventoryForm.editStoreId}
+                      onChange={(event) => onEditInventoryScopeChange(editingCumulativeInventoryItem, event.target.value)}
+                    >
+                      <option value="all">All stores</option>
+                      {cumulativeInventoryStoreColumns.filter((store) =>
+                        Object.prototype.hasOwnProperty.call(editingCumulativeInventoryItem.countsByStore || {}, String(store.id))
+                      ).map((store) => (
+                        <option key={store.id} value={String(store.id)}>
+                          {store.name} #{store.officeNumber}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    <span className="icon-text"><UIIcon name="warning" />Delete From</span>
+                    <select
+                      name="deleteStoreId"
+                      value={editInventoryForm.deleteStoreId}
+                      onChange={onEditInventoryFormChange}
+                    >
+                      <option value="all">All stores</option>
+                      {cumulativeInventoryStoreColumns.filter((store) =>
+                        Object.prototype.hasOwnProperty.call(editingCumulativeInventoryItem.countsByStore || {}, String(store.id))
+                      ).map((store) => (
+                        <option key={store.id} value={String(store.id)}>
+                          {store.name} #{store.officeNumber}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+
+                <div className="table-actions inventory-edit-modal-actions">
+                  <button
+                    type="button"
+                    className="action-btn"
+                    onClick={() => onSaveEditInventory(editingCumulativeInventoryItem)}
+                    disabled={deletingInventoryKey === editingInventoryKey}
+                  >
+                    Save
+                  </button>
+                  <button
+                    type="button"
+                    className="danger-btn"
+                    onClick={() => onDeleteInventory(editingCumulativeInventoryItem, cumulativeInventoryStoreColumns.filter((store) =>
+                      Object.prototype.hasOwnProperty.call(editingCumulativeInventoryItem.countsByStore || {}, String(store.id))
+                    ))}
+                    disabled={deletingInventoryKey === editingInventoryKey}
+                  >
+                    {deletingInventoryKey === editingInventoryKey ? "Deleting..." : "Delete"}
+                  </button>
+                  <button type="button" className="signout-btn" onClick={() => setEditingInventoryKey("")}>Cancel</button>
+                </div>
+              </div>
+            </section>
+          </div>
+        )}
       </main>
     );
   }
@@ -2652,15 +3574,11 @@ function App() {
   return (
     <main className="page">
       <section className="portal-card" aria-label="Authentication">
-        <div className="brand-row">
-          <div className="brand-icon" aria-hidden="true">
-            <span></span>
-          </div>
-          <div>
-            <p className="eyebrow">Secure Portal</p>
-            <h1>Manager Login</h1>
-          </div>
-        </div>
+        <BrandLockup
+          eyebrow="Manager's Must"
+          title="Manager Portal"
+          subtitle="A clear daily workspace for inventory, posts, and people"
+        />
 
         <div className="mode-toggle">
           <button type="button" className={mode === "login" ? "active" : ""} onClick={() => setMode("login")}>
