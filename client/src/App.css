@@ -247,6 +247,8 @@ select {
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.84);
   color: var(--text);
+   font: inherit;
+   font-size: 16px;
   padding: 0.62rem 0.7rem;
 }
 
