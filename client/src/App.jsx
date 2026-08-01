@@ -3058,20 +3058,27 @@ function App() {
                     </select>
                   </label>
 
-                  <label>
-                    <span className="icon-text"><UIIcon name="tag" />Inventory Category</span>
-                    <select
-                      value={dailyPostCategory}
-                      onChange={(event) => setDailyPostCategory(event.target.value)}
-                      disabled={!dailyPostStoreId}
-                    >
-                      <option value="">Select category</option>
-                      {dailyPostCategoryOptions.map((category) => (
-                        <option key={category.value} value={category.value}>{category.label}</option>
-                      ))}
-                    </select>
-                    {loadingDailyPostCategories && <LoadingIndicator label="Loading categories..." inline compact />}
-                  </label>
+                  {dailyPostStep === "setup" && !dailyPostCategory ? (
+                    <label>
+                      <span className="icon-text"><UIIcon name="tag" />Inventory Category</span>
+                      <select
+                        value={dailyPostCategory}
+                        onChange={(event) => setDailyPostCategory(event.target.value)}
+                        disabled={!dailyPostStoreId}
+                      >
+                        <option value="">Select category</option>
+                        {dailyPostCategoryOptions.map((category) => (
+                          <option key={category.value} value={category.value}>{category.label}</option>
+                        ))}
+                      </select>
+                      {loadingDailyPostCategories && <LoadingIndicator label="Loading categories..." inline compact />}
+                    </label>
+                  ) : (
+                    <div className="readonly-field">
+                      <span className="icon-text"><UIIcon name="tag" />Inventory Category</span>
+                      <strong>{dailyPostCategory || "No category selected"}</strong>
+                    </div>
+                  )}
                 </div>
 
                 {dailyPostStep === "setup" && (
