@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS inventories (
   inventory_category VARCHAR(120) NOT NULL,
   inventory_group VARCHAR(120) NULL,
   inventory_item_category VARCHAR(120) NULL,
+  sub_item_number INT NULL,
   item_name VARCHAR(160) NOT NULL,
   sku VARCHAR(120) NULL,
   quantity INT NOT NULL DEFAULT 0,
@@ -35,6 +36,17 @@ CREATE TABLE IF NOT EXISTS inventories (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   CONSTRAINT fk_inventories_store FOREIGN KEY (store_id) REFERENCES stores(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS inventory_sub_items (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  inventory_id BIGINT NOT NULL,
+  sub_item_number INT NOT NULL,
+  label VARCHAR(120) NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT uq_inventory_sub_items_number UNIQUE (inventory_id, sub_item_number),
+  CONSTRAINT fk_inventory_sub_items_inventory FOREIGN KEY (inventory_id) REFERENCES inventories(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS inventory_categories (
@@ -53,6 +65,7 @@ CREATE TABLE IF NOT EXISTS inventory_posts (
   inventory_category VARCHAR(120) NOT NULL,
   inventory_group VARCHAR(120) NULL,
   inventory_item_category VARCHAR(120) NULL,
+  sub_item_number INT NULL,
   inventory_name VARCHAR(160) NOT NULL,
   posted_count INT NOT NULL,
   posted_by_user_id BIGINT NOT NULL,
@@ -61,4 +74,15 @@ CREATE TABLE IF NOT EXISTS inventory_posts (
   CONSTRAINT fk_inventory_posts_store FOREIGN KEY (store_id) REFERENCES stores(id) ON DELETE CASCADE,
   CONSTRAINT fk_inventory_posts_inventory FOREIGN KEY (inventory_id) REFERENCES inventories(id) ON DELETE CASCADE,
   CONSTRAINT fk_inventory_posts_user FOREIGN KEY (posted_by_user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS inventory_post_sub_items (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  post_id BIGINT NOT NULL,
+  sub_item_number INT NOT NULL,
+  label VARCHAR(120) NOT NULL,
+  posted_count INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT uq_inventory_post_sub_items UNIQUE (post_id, sub_item_number),
+  CONSTRAINT fk_inventory_post_sub_items_post FOREIGN KEY (post_id) REFERENCES inventory_posts(id) ON DELETE CASCADE
 );

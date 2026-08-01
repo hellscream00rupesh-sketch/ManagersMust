@@ -74,6 +74,152 @@ function normalizeOptionalGroup(value) {
   return trimmed ? trimmed : null;
 }
 
+function parseSubItemLabels(value) {
+  return String(value || "")
+    .split(/\r?\n|\||,/) 
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function normalizeSubItemsInput(subItems, legacyValue) {
+  const source = Array.isArray(subItems) ? subItems : parseSubItemLabels(legacyValue);
+  const normalized = [];
+  const seen = new Set();
+
+  source.forEach((entry) => {
+    const label = String(entry || "").trim();
+    if (!label) {
+      return;
+    }
+
+    const dedupeKey = label.toLowerCase();
+    if (seen.has(dedupeKey)) {
+      return;
+    }
+
+    seen.add(dedupeKey);
+    normalized.push(label);
+  });
+
+  return normalized;
+}
+
+async function getSubItemsByInventoryIds(inventoryIds) {
+  if (!Array.isArray(inventoryIds) || inventoryIds.length === 0) {
+    return new Map();
+  }
+
+  const placeholders = inventoryIds.map(() => "?").join(", ");
+  const [rows] = await pool.query(
+    `SELECT inventory_id AS inventoryId, sub_item_number AS subItemNumber, label
+     FROM inventory_sub_items
+     WHERE inventory_id IN (${placeholders})
+     ORDER BY inventory_id ASC, sub_item_number ASC, id ASC`,
+    inventoryIds
+  );
+
+  const map = new Map();
+  inventoryIds.forEach((id) => map.set(Number(id), []));
+
+  rows.forEach((row) => {
+    const key = Number(row.inventoryId);
+    if (!map.has(key)) {
+      map.set(key, []);
+    }
+    map.get(key).push({
+      subItemNumber: Number(row.subItemNumber || 0),
+      label: String(row.label || "").trim()
+    });
+  });
+
+  return map;
+}
+
+async function replaceInventorySubItems(inventoryId, labels) {
+  await pool.query("DELETE FROM inventory_sub_items WHERE inventory_id = ?", [inventoryId]);
+
+  if (!Array.isArray(labels) || labels.length === 0) {
+    return;
+  }
+
+  const placeholders = labels.map(() => "(?, ?, ?)").join(", ");
+  const values = [];
+  labels.forEach((label, index) => {
+    values.push(inventoryId, index + 1, label);
+  });
+
+  await pool.query(
+    `INSERT INTO inventory_sub_items (inventory_id, sub_item_number, label) VALUES ${placeholders}`,
+    values
+  );
+}
+
+async function attachSubItemsToInventoryRows(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return rows;
+  }
+
+  const inventoryIds = rows.map((row) => Number(row.id)).filter((id) => Number.isInteger(id) && id > 0);
+  const subItemsMap = await getSubItemsByInventoryIds(inventoryIds);
+
+  rows.forEach((row) => {
+    const subItems = (subItemsMap.get(Number(row.id)) || []).map((entry) => entry.label).filter(Boolean);
+    row.subItems = subItems;
+    row.inventoryItemCategory = subItems[0] || row.inventoryItemCategory || null;
+    row.subItemNumber = subItems.length > 0 ? 1 : null;
+  });
+
+  return rows;
+}
+
+async function attachSubItemCountsToPosts(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return rows;
+  }
+
+  const postIds = rows.map((row) => Number(row.id)).filter((id) => Number.isInteger(id) && id > 0);
+  if (postIds.length === 0) {
+    rows.forEach((row) => {
+      row.subItemCounts = [];
+    });
+    return rows;
+  }
+
+  const placeholders = postIds.map(() => "?").join(", ");
+  const [subItemRows] = await pool.query(
+    `SELECT
+       post_id AS postId,
+       sub_item_number AS subItemNumber,
+       label,
+       posted_count AS postedCount
+     FROM inventory_post_sub_items
+     WHERE post_id IN (${placeholders})
+     ORDER BY post_id ASC, sub_item_number ASC, id ASC`,
+    postIds
+  );
+
+  const map = new Map();
+  postIds.forEach((id) => map.set(id, []));
+
+  subItemRows.forEach((entry) => {
+    const key = Number(entry.postId);
+    if (!map.has(key)) {
+      map.set(key, []);
+    }
+    map.get(key).push({
+      subItemNumber: Number(entry.subItemNumber || 0),
+      label: String(entry.label || "").trim(),
+      postedCount: Number(entry.postedCount || 0)
+    });
+  });
+
+  rows.forEach((row) => {
+    row.subItemCounts = map.get(Number(row.id)) || [];
+  });
+
+  return rows;
+}
+
 async function requireAuth(req, res, next) {
   const authHeader = req.headers.authorization || "";
   const [scheme, token] = authHeader.split(" ");
@@ -620,6 +766,7 @@ app.get("/api/inventory/posts", requireAuth, async (req, res) => {
          p.inventory_category AS inventoryCategory,
          p.inventory_group AS inventoryGroup,
          p.inventory_item_category AS inventoryItemCategory,
+         p.sub_item_number AS subItemNumber,
          p.inventory_name AS inventoryName,
          p.posted_count AS postedCount,
          p.posted_by_user_id AS postedByUserId,
@@ -634,6 +781,8 @@ app.get("/api/inventory/posts", requireAuth, async (req, res) => {
        ${limitClause}`,
       values
     );
+
+    await attachSubItemCountsToPosts(rows);
 
     return res.json({ posts: rows });
   } catch (error) {
@@ -655,45 +804,65 @@ app.get("/api/inventory/cumulative", requireAuth, async (req, res) => {
 
     const [rows] = await pool.query(
       `SELECT
+        i.id AS inventoryId,
         s.id AS storeId,
         i.inventory_category AS inventoryCategory,
         i.inventory_group AS inventoryGroup,
         i.inventory_item_category AS inventoryItemCategory,
         i.item_name AS inventoryName,
-        SUM(i.quantity) AS inventoryCount,
-        SUM(i.preferred_count) AS preferredCount
+        i.quantity AS inventoryCount,
+        i.preferred_count AS preferredCount
       FROM inventories i
       JOIN stores s ON s.id = i.store_id
       WHERE s.manager_id = ?
-      GROUP BY s.id, i.inventory_category, i.inventory_group, i.inventory_item_category, i.item_name
-      ORDER BY i.item_name ASC`,
+      ORDER BY i.inventory_category ASC, i.inventory_group ASC, i.item_name ASC, i.created_at ASC, i.id ASC`,
       [managerId]
     );
+
+    const inventoryIds = rows.map((row) => Number(row.inventoryId)).filter((id) => Number.isInteger(id) && id > 0);
+    const subItemsMap = await getSubItemsByInventoryIds(inventoryIds);
 
     const itemsMap = new Map();
 
     for (const row of rows) {
-      const key = `${row.inventoryCategory}::${row.inventoryGroup || ""}::${row.inventoryItemCategory || ""}::${row.inventoryName}`;
+      const key = `${row.inventoryCategory}::${row.inventoryGroup || ""}::${row.inventoryName}`;
       if (!itemsMap.has(key)) {
         itemsMap.set(key, {
           inventoryCategory: row.inventoryCategory,
           inventoryGroup: row.inventoryGroup || null,
-          inventoryItemCategory: row.inventoryItemCategory || null,
           inventoryName: row.inventoryName,
+          inventoryItemCategory: row.inventoryItemCategory || null,
+          subItemNumber: null,
           countsByStore: {},
           preferredByStore: {},
           cumulativePreferredCount: 0,
-          cumulativeCount: 0
+          cumulativeCount: 0,
+          subItems: []
         });
       }
 
       const item = itemsMap.get(key);
       const safeCount = Number(row.inventoryCount || 0);
       const safePreferredCount = Number(row.preferredCount || 0);
-      item.countsByStore[String(row.storeId)] = safeCount;
-      item.preferredByStore[String(row.storeId)] = safePreferredCount;
+      item.countsByStore[String(row.storeId)] = Number(item.countsByStore[String(row.storeId)] || 0) + safeCount;
+      item.preferredByStore[String(row.storeId)] = Number(item.preferredByStore[String(row.storeId)] || 0) + safePreferredCount;
       item.cumulativeCount += safeCount;
       item.cumulativePreferredCount += safePreferredCount;
+
+      const rowSubItems = (subItemsMap.get(Number(row.inventoryId)) || [])
+        .map((entry) => String(entry.label || "").trim())
+        .filter(Boolean);
+
+      rowSubItems.forEach((label) => {
+        if (!item.subItems.includes(label)) {
+          item.subItems.push(label);
+        }
+      });
+
+      if (item.subItems.length > 0) {
+        item.inventoryItemCategory = item.subItems[0];
+        item.subItemNumber = 1;
+      }
     }
 
     return res.json({ stores: storeRows, items: Array.from(itemsMap.values()) });
@@ -707,6 +876,7 @@ app.patch("/api/inventory/cumulative", requireAuth, requireElevatedAccess, async
     inventoryCategory,
     inventoryGroup,
     inventoryItemCategory,
+    newSubItems,
     inventoryName,
     newInventoryCategory,
     newInventoryGroup,
@@ -736,11 +906,11 @@ app.patch("/api/inventory/cumulative", requireAuth, requireElevatedAccess, async
 
     const safeCurrentCategory = String(inventoryCategory).trim();
     const safeCurrentGroup = normalizeOptionalGroup(inventoryGroup);
-    const safeCurrentItemCategory = normalizeOptionalGroup(inventoryItemCategory);
     const safeCurrentName = String(inventoryName).trim();
     const safeNewCategory = String(newInventoryCategory).trim();
     const safeNewGroup = normalizeOptionalGroup(newInventoryGroup);
-    const safeNewItemCategory = normalizeOptionalGroup(newInventoryItemCategory);
+    const safeNewSubItems = normalizeSubItemsInput(newSubItems, newInventoryItemCategory);
+    const safeNewItemCategory = safeNewSubItems[0] || null;
     const safeNewName = String(newInventoryName).trim();
     const safePreferredCount = Number(preferredCount);
     const scopedStoreId =
@@ -762,6 +932,30 @@ app.patch("/api/inventory/cumulative", requireAuth, requireElevatedAccess, async
       safeNewCategory
     ]);
 
+    const [matchedRows] = await pool.query(
+      `SELECT i.id AS inventoryId
+       FROM inventories i
+       JOIN stores s ON s.id = i.store_id
+       WHERE s.manager_id = ?
+         AND (? IS NULL OR i.store_id = ?)
+         AND i.inventory_category = ?
+         AND ((? IS NULL AND i.inventory_group IS NULL) OR i.inventory_group = ?)
+         AND i.item_name = ?`,
+      [
+        managerScopeId,
+        scopedStoreId,
+        scopedStoreId,
+        safeCurrentCategory,
+        safeCurrentGroup,
+        safeCurrentGroup,
+        safeCurrentName
+      ]
+    );
+
+    if (matchedRows.length === 0) {
+      return res.status(404).json({ message: "No matching inventory item found to update." });
+    }
+
     const [update] = await pool.query(
       `UPDATE inventories i
        JOIN stores s ON s.id = i.store_id
@@ -774,7 +968,6 @@ app.patch("/api/inventory/cumulative", requireAuth, requireElevatedAccess, async
          AND (? IS NULL OR i.store_id = ?)
          AND i.inventory_category = ?
          AND ((? IS NULL AND i.inventory_group IS NULL) OR i.inventory_group = ?)
-         AND ((? IS NULL AND i.inventory_item_category IS NULL) OR i.inventory_item_category = ?)
          AND i.item_name = ?`,
       [
         safeNewCategory,
@@ -788,8 +981,6 @@ app.patch("/api/inventory/cumulative", requireAuth, requireElevatedAccess, async
         safeCurrentCategory,
         safeCurrentGroup,
         safeCurrentGroup,
-        safeCurrentItemCategory,
-        safeCurrentItemCategory,
         safeCurrentName
       ]
     );
@@ -797,6 +988,10 @@ app.patch("/api/inventory/cumulative", requireAuth, requireElevatedAccess, async
     if (update.affectedRows === 0) {
       return res.status(404).json({ message: "No matching inventory item found to update." });
     }
+
+    await Promise.all(
+      matchedRows.map((row) => replaceInventorySubItems(row.inventoryId, safeNewSubItems))
+    );
 
     return res.json({
       message: scopedStoreId !== null ? "Inventory updated for the selected store." : "Inventory updated for all stores.",
@@ -822,7 +1017,6 @@ app.delete("/api/inventory/cumulative", requireAuth, requireElevatedAccess, asyn
 
     const safeCategory = String(inventoryCategory).trim();
     const safeGroup = normalizeOptionalGroup(inventoryGroup);
-    const safeItemCategory = normalizeOptionalGroup(inventoryItemCategory);
     const safeName = String(inventoryName).trim();
     const scopedStoreId =
       storeId === undefined || storeId === null || storeId === "" ? null : Number(storeId);
@@ -844,9 +1038,8 @@ app.delete("/api/inventory/cumulative", requireAuth, requireElevatedAccess, asyn
            AND i.store_id = ?
            AND i.inventory_category = ?
            AND ((? IS NULL AND i.inventory_group IS NULL) OR i.inventory_group = ?)
-           AND ((? IS NULL AND i.inventory_item_category IS NULL) OR i.inventory_item_category = ?)
            AND i.item_name = ?`,
-        [managerScopeId, scopedStoreId, safeCategory, safeGroup, safeGroup, safeItemCategory, safeItemCategory, safeName]
+          [managerScopeId, scopedStoreId, safeCategory, safeGroup, safeGroup, safeName]
       );
 
       if (deleted.affectedRows === 0) {
@@ -865,9 +1058,8 @@ app.delete("/api/inventory/cumulative", requireAuth, requireElevatedAccess, asyn
        WHERE s.manager_id = ?
          AND i.inventory_category = ?
          AND ((? IS NULL AND i.inventory_group IS NULL) OR i.inventory_group = ?)
-         AND ((? IS NULL AND i.inventory_item_category IS NULL) OR i.inventory_item_category = ?)
          AND i.item_name = ?`,
-      [managerScopeId, safeCategory, safeGroup, safeGroup, safeItemCategory, safeItemCategory, safeName]
+      [managerScopeId, safeCategory, safeGroup, safeGroup, safeName]
     );
 
     if (deleted.affectedRows === 0) {
@@ -896,7 +1088,7 @@ app.get("/api/stores/:storeId/inventory", requireAuth, async (req, res) => {
 
     const values = [storeId];
     let query =
-      "SELECT id, store_id AS storeId, inventory_category AS inventoryCategory, inventory_group AS inventoryGroup, inventory_item_category AS inventoryItemCategory, item_name AS inventoryName, quantity AS inventoryCount, preferred_count AS preferredCount, sku, unit, created_at AS createdAt, updated_at AS updatedAt FROM inventories WHERE store_id = ?";
+      "SELECT id, store_id AS storeId, inventory_category AS inventoryCategory, inventory_group AS inventoryGroup, inventory_item_category AS inventoryItemCategory, sub_item_number AS subItemNumber, item_name AS inventoryName, quantity AS inventoryCount, preferred_count AS preferredCount, sku, unit, created_at AS createdAt, updated_at AS updatedAt FROM inventories WHERE store_id = ?";
     if (categoryFilter) {
       query += " AND inventory_category = ?";
       values.push(categoryFilter);
@@ -908,6 +1100,7 @@ app.get("/api/stores/:storeId/inventory", requireAuth, async (req, res) => {
     query += " ORDER BY item_name ASC";
 
     const [rows] = await pool.query(query, values);
+    await attachSubItemsToInventoryRows(rows);
 
     return res.json({ store, inventory: rows });
   } catch (error) {
@@ -987,7 +1180,8 @@ app.get("/api/stores/:storeId/inventory/posts", requireAuth, async (req, res) =>
          p.inventory_id AS inventoryId,
          p.inventory_category AS inventoryCategory,
          p.inventory_group AS inventoryGroup,
-        p.inventory_item_category AS inventoryItemCategory,
+         p.inventory_item_category AS inventoryItemCategory,
+         p.sub_item_number AS subItemNumber,
          p.inventory_name AS inventoryName,
          p.posted_count AS postedCount,
          p.posted_by_user_id AS postedByUserId,
@@ -1002,6 +1196,8 @@ app.get("/api/stores/:storeId/inventory/posts", requireAuth, async (req, res) =>
       values
     );
 
+    await attachSubItemCountsToPosts(rows);
+
     return res.json({ store, posts: rows });
   } catch (error) {
     return res.status(500).json({ message: "Could not fetch inventory post feed.", detail: error.message });
@@ -1010,7 +1206,16 @@ app.get("/api/stores/:storeId/inventory/posts", requireAuth, async (req, res) =>
 
 app.post("/api/stores/:storeId/inventory", requireAuth, requireElevatedAccess, async (req, res) => {
   const storeId = Number(req.params.storeId);
-  const { inventoryCategory, inventoryGroup, inventoryItemCategory, inventoryName, inventoryCount, preferredCount, addToAllStores } = req.body;
+  const {
+    inventoryCategory,
+    inventoryGroup,
+    inventoryItemCategory,
+    subItems,
+    inventoryName,
+    inventoryCount,
+    preferredCount,
+    addToAllStores
+  } = req.body;
 
   if (!Number.isInteger(storeId) || storeId <= 0) {
     return res.status(400).json({ message: "Invalid store id." });
@@ -1060,7 +1265,8 @@ app.post("/api/stores/:storeId/inventory", requireAuth, requireElevatedAccess, a
     const safePreferredCount = Number(preferredCount);
     const safeCategory = String(inventoryCategory).trim();
     const safeGroup = normalizeOptionalGroup(inventoryGroup);
-    const safeItemCategory = normalizeOptionalGroup(inventoryItemCategory);
+    const safeSubItems = normalizeSubItemsInput(subItems, inventoryItemCategory);
+    const safeItemCategory = safeSubItems[0] || null;
     const safeName = String(inventoryName).trim();
 
     await pool.query("INSERT IGNORE INTO inventory_categories (manager_id, name) VALUES (?, ?)", [
@@ -1068,21 +1274,25 @@ app.post("/api/stores/:storeId/inventory", requireAuth, requireElevatedAccess, a
       safeCategory
     ]);
 
-    const placeholders = targetStoreIds.map(() => "(?, ?, ?, ?, ?, ?, ?, ?)").join(", ");
-    const values = [];
-    targetStoreIds.forEach((targetId) => {
-      values.push(targetId, safeCategory, safeGroup, safeItemCategory, safeName, null, safeInventoryCount, safePreferredCount);
-    });
+    const insertedByStore = new Map();
+    for (const targetId of targetStoreIds) {
+      const [inserted] = await pool.query(
+        `INSERT INTO inventories (store_id, inventory_category, inventory_group, inventory_item_category, item_name, sku, quantity, preferred_count)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [targetId, safeCategory, safeGroup, safeItemCategory, safeName, null, safeInventoryCount, safePreferredCount]
+      );
+      insertedByStore.set(Number(targetId), Number(inserted.insertId));
 
-    await pool.query(
-      `INSERT INTO inventories (store_id, inventory_category, inventory_group, inventory_item_category, item_name, sku, quantity, preferred_count) VALUES ${placeholders}`,
-      values
-    );
+      await replaceInventorySubItems(inserted.insertId, safeSubItems);
+    }
 
+    const selectedStoreItemId = insertedByStore.get(Number(storeId));
     const [rows] = await pool.query(
-      "SELECT id, store_id AS storeId, inventory_category AS inventoryCategory, inventory_group AS inventoryGroup, inventory_item_category AS inventoryItemCategory, item_name AS inventoryName, quantity AS inventoryCount, preferred_count AS preferredCount, sku, unit, created_at AS createdAt FROM inventories WHERE store_id = ? ORDER BY created_at DESC LIMIT 1",
-      [storeId]
+      "SELECT id, store_id AS storeId, inventory_category AS inventoryCategory, inventory_group AS inventoryGroup, inventory_item_category AS inventoryItemCategory, sub_item_number AS subItemNumber, item_name AS inventoryName, quantity AS inventoryCount, preferred_count AS preferredCount, sku, unit, created_at AS createdAt FROM inventories WHERE id = ? LIMIT 1",
+      [selectedStoreItemId]
     );
+
+    await attachSubItemsToInventoryRows(rows);
 
     return res.status(201).json({
       message: Boolean(addToAllStores)
@@ -1099,7 +1309,7 @@ app.post("/api/stores/:storeId/inventory", requireAuth, requireElevatedAccess, a
 app.patch("/api/stores/:storeId/inventory/:itemId/count", requireAuth, async (req, res) => {
   const storeId = Number(req.params.storeId);
   const itemId = Number(req.params.itemId);
-  const { inventoryCount } = req.body;
+  const { inventoryCount, subItemCounts } = req.body;
 
   if (!Number.isInteger(storeId) || storeId <= 0) {
     return res.status(400).json({ message: "Invalid store id." });
@@ -1112,6 +1322,19 @@ app.patch("/api/stores/:storeId/inventory/:itemId/count", requireAuth, async (re
   if (inventoryCount === undefined || inventoryCount === null || Number.isNaN(Number(inventoryCount))) {
     return res.status(400).json({ message: "Inventory Count is required and must be a number." });
   }
+
+  const normalizedSubItemCounts = Array.isArray(subItemCounts)
+    ? subItemCounts
+        .map((entry, index) => ({
+          subItemNumber:
+            Number.isInteger(Number(entry?.subItemNumber)) && Number(entry.subItemNumber) > 0
+              ? Number(entry.subItemNumber)
+              : index + 1,
+          label: String(entry?.label || "").trim(),
+          postedCount: Number(entry?.postedCount ?? 0)
+        }))
+        .filter((entry) => entry.label && !Number.isNaN(entry.postedCount) && entry.postedCount >= 0)
+    : [];
 
   try {
     const store = await getStoreForUser(req.auth, storeId);
@@ -1129,25 +1352,39 @@ app.patch("/api/stores/:storeId/inventory/:itemId/count", requireAuth, async (re
     }
 
     const [rows] = await pool.query(
-      "SELECT id, store_id AS storeId, inventory_category AS inventoryCategory, inventory_group AS inventoryGroup, inventory_item_category AS inventoryItemCategory, item_name AS inventoryName, quantity AS inventoryCount, preferred_count AS preferredCount, sku, unit, created_at AS createdAt, updated_at AS updatedAt FROM inventories WHERE id = ?",
+      "SELECT id, store_id AS storeId, inventory_category AS inventoryCategory, inventory_group AS inventoryGroup, inventory_item_category AS inventoryItemCategory, sub_item_number AS subItemNumber, item_name AS inventoryName, quantity AS inventoryCount, preferred_count AS preferredCount, sku, unit, created_at AS createdAt, updated_at AS updatedAt FROM inventories WHERE id = ?",
       [itemId]
     );
 
     const updatedItem = rows[0];
 
     const [insertPost] = await pool.query(
-      "INSERT INTO inventory_posts (store_id, inventory_id, inventory_category, inventory_group, inventory_item_category, inventory_name, posted_count, posted_by_user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO inventory_posts (store_id, inventory_id, inventory_category, inventory_group, inventory_item_category, sub_item_number, inventory_name, posted_count, posted_by_user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
       [
         storeId,
         itemId,
         updatedItem.inventoryCategory,
         updatedItem.inventoryGroup,
         updatedItem.inventoryItemCategory,
+        updatedItem.subItemNumber,
         updatedItem.inventoryName,
         Number(inventoryCount),
         req.auth.userId
       ]
     );
+
+    if (normalizedSubItemCounts.length > 0) {
+      const placeholders = normalizedSubItemCounts.map(() => "(?, ?, ?, ?)").join(", ");
+      const values = [];
+      normalizedSubItemCounts.forEach((entry) => {
+        values.push(insertPost.insertId, entry.subItemNumber, entry.label, entry.postedCount);
+      });
+
+      await pool.query(
+        `INSERT INTO inventory_post_sub_items (post_id, sub_item_number, label, posted_count) VALUES ${placeholders}`,
+        values
+      );
+    }
 
     const [postRows] = await pool.query(
       `SELECT
@@ -1157,6 +1394,7 @@ app.patch("/api/stores/:storeId/inventory/:itemId/count", requireAuth, async (re
          p.inventory_category AS inventoryCategory,
          p.inventory_group AS inventoryGroup,
          p.inventory_item_category AS inventoryItemCategory,
+         p.sub_item_number AS subItemNumber,
          p.inventory_name AS inventoryName,
          p.posted_count AS postedCount,
          p.posted_by_user_id AS postedByUserId,
@@ -1168,6 +1406,8 @@ app.patch("/api/stores/:storeId/inventory/:itemId/count", requireAuth, async (re
          WHERE p.id = ?`,
       [insertPost.insertId]
     );
+
+    await attachSubItemCountsToPosts(postRows);
 
     return res.json({ message: "Inventory count updated.", item: updatedItem, post: postRows[0] || null });
   } catch (error) {
@@ -1182,6 +1422,7 @@ app.patch("/api/stores/:storeId/inventory/:itemId", requireAuth, requireElevated
     inventoryCategory,
     inventoryGroup,
     inventoryItemCategory,
+    subItems,
     inventoryName,
     inventoryCount,
     preferredCount
@@ -1224,7 +1465,8 @@ app.patch("/api/stores/:storeId/inventory/:itemId", requireAuth, requireElevated
 
     const safeCategory = String(inventoryCategory).trim();
     const safeGroup = normalizeOptionalGroup(inventoryGroup);
-    const safeItemCategory = normalizeOptionalGroup(inventoryItemCategory);
+    const safeSubItems = normalizeSubItemsInput(subItems, inventoryItemCategory);
+    const safeItemCategory = safeSubItems[0] || null;
     const safeName = String(inventoryName).trim();
     const safeCount = Number(inventoryCount);
     const safePreferredCount = Number(preferredCount);
@@ -1238,15 +1480,19 @@ app.patch("/api/stores/:storeId/inventory/:itemId", requireAuth, requireElevated
       return res.status(404).json({ message: "Inventory item not found for this store." });
     }
 
+    await replaceInventorySubItems(itemId, safeSubItems);
+
     await pool.query("INSERT IGNORE INTO inventory_categories (manager_id, name) VALUES (?, ?)", [
       managerScopeId,
       safeCategory
     ]);
 
     const [rows] = await pool.query(
-      "SELECT id, store_id AS storeId, inventory_category AS inventoryCategory, inventory_group AS inventoryGroup, inventory_item_category AS inventoryItemCategory, item_name AS inventoryName, quantity AS inventoryCount, preferred_count AS preferredCount, sku, unit, created_at AS createdAt, updated_at AS updatedAt FROM inventories WHERE id = ?",
+      "SELECT id, store_id AS storeId, inventory_category AS inventoryCategory, inventory_group AS inventoryGroup, inventory_item_category AS inventoryItemCategory, sub_item_number AS subItemNumber, item_name AS inventoryName, quantity AS inventoryCount, preferred_count AS preferredCount, sku, unit, created_at AS createdAt, updated_at AS updatedAt FROM inventories WHERE id = ?",
       [itemId]
     );
+
+    await attachSubItemsToInventoryRows(rows);
 
     return res.json({ message: "Inventory item updated.", item: rows[0] || null });
   } catch (error) {

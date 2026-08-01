@@ -776,6 +776,36 @@ select:focus {
   gap: 0.28rem;
 }
 
+.subitem-details {
+  display: grid;
+  gap: 0.24rem;
+}
+
+.subitem-details summary {
+  cursor: pointer;
+  color: #835228;
+  font-size: 0.72rem;
+  font-weight: 700;
+  list-style: none;
+}
+
+.subitem-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.subitem-details summary::before {
+  content: "> ";
+  color: #9d6a36;
+}
+
+.subitem-details[open] summary::before {
+  content: "v ";
+}
+
+.subitem-details .tiny {
+  overflow-wrap: anywhere;
+}
+
 .inventory-delete-controls {
   display: grid;
   gap: 0.45rem;

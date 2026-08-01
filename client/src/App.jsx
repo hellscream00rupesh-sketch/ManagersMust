@@ -122,9 +122,37 @@ function formatInventoryCategoryLabel(category, group) {
   return safeGroup ? `${safeCategory} / ${safeGroup}` : safeCategory;
 }
 
-function formatInventoryItemCategoryLabel(itemCategory) {
-  const safeItemCategory = String(itemCategory || "").trim();
-  return safeItemCategory || "Uncategorized";
+function parseSubItemLabels(value) {
+  return String(value || "")
+    .split(/\r?\n|,|\|/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function serializeSubItemLabels(value) {
+  const labels = parseSubItemLabels(value);
+  return labels.length > 0 ? labels.join(" | ") : null;
+}
+
+function formatInventoryItemCategoryLabel(itemCategory, subItemNumber, subItems = []) {
+  const labels = Array.isArray(subItems) && subItems.length > 0
+    ? subItems.map((entry) => String(entry || "").trim()).filter(Boolean)
+    : parseSubItemLabels(itemCategory);
+  const safeSubItemNumber = Number(subItemNumber);
+  if (Number.isInteger(safeSubItemNumber) && safeSubItemNumber > 0) {
+    const label = labels[0] || "";
+    return label ? `Sub Item #${safeSubItemNumber} (${label})` : `Sub Item #${safeSubItemNumber}`;
+  }
+
+  if (labels.length === 0) {
+    return "Uncategorized";
+  }
+
+  if (labels.length === 1) {
+    return `Sub Item #1 (${labels[0]})`;
+  }
+
+  return labels.map((label, index) => `#${index + 1} ${label}`).join(", ");
 }
 
 function sumInventoryPreferredCounts(item, storeIds) {
@@ -159,6 +187,14 @@ function buildInventoryItemKey(category, group, itemCategory, inventoryName) {
   ].join("::");
 }
 
+function buildInventoryParentItemKey(category, group, inventoryName) {
+  return [String(category || "").trim(), String(group || "").trim(), String(inventoryName || "").trim()].join("::");
+}
+
+function hasSubItems(item) {
+  return Array.isArray(item?.subItems) && item.subItems.length > 0;
+}
+
 function encodeCategorySelection(category, group = "") {
   return JSON.stringify({ category, group });
 }
@@ -191,6 +227,7 @@ function App() {
   const [employees, setEmployees] = useState([]);
   const [loadingStores, setLoadingStores] = useState(false);
   const [loadingEmployees, setLoadingEmployees] = useState(false);
+  const [loadingData, setLoadingData] = useState(false);
   const [inventoryCategories, setInventoryCategories] = useState([]);
   const [loadingInventoryCategories, setLoadingInventoryCategories] = useState(false);
   const [storeSearch, setStoreSearch] = useState("");
@@ -247,6 +284,9 @@ function App() {
     preferredCount: "",
     addToAllStores: false
   });
+  const [inventorySubItemDraft, setInventorySubItemDraft] = useState("");
+  const [storeEditSubItemDraft, setStoreEditSubItemDraft] = useState("");
+  const [cumulativeEditSubItemDraft, setCumulativeEditSubItemDraft] = useState("");
 
   const addCategoryValue = "__add_new_category__";
   const [showStoreForm, setShowStoreForm] = useState(false);
@@ -259,6 +299,7 @@ function App() {
   const [dailyPostInventoryItems, setDailyPostInventoryItems] = useState([]);
   const [dailyPostInitialCounts, setDailyPostInitialCounts] = useState({});
   const [dailyPostDraftCounts, setDailyPostDraftCounts] = useState({});
+  const [dailyPostDraftSubItemCounts, setDailyPostDraftSubItemCounts] = useState({});
   const [dailyPostCurrentIndex, setDailyPostCurrentIndex] = useState(0);
   const [loadingDailyPostItems, setLoadingDailyPostItems] = useState(false);
   const [submittingDailyPost, setSubmittingDailyPost] = useState(false);
@@ -401,7 +442,8 @@ function App() {
           item.inventoryName,
           item.inventoryCategory,
           item.inventoryGroup,
-          item.inventoryItemCategory
+          item.inventoryItemCategory,
+          item.subItemNumber
         ]
           .filter(Boolean)
           .join(" ")
@@ -432,7 +474,7 @@ function App() {
 
   const editingCumulativeInventoryItem = editingInventoryKey
     ? cumulativeInventory.find((item) => {
-        const rowKey = buildInventoryItemKey(item.inventoryCategory, item.inventoryGroup, item.inventoryItemCategory, item.inventoryName);
+        const rowKey = buildInventoryParentItemKey(item.inventoryCategory, item.inventoryGroup, item.inventoryName);
         return rowKey === editingInventoryKey;
       }) || null
     : null;
@@ -633,7 +675,13 @@ function App() {
           return true;
         }
 
-        const searchable = [item.inventoryName, item.inventoryCategory, item.inventoryGroup, item.inventoryItemCategory]
+        const searchable = [
+          item.inventoryName,
+          item.inventoryCategory,
+          item.inventoryGroup,
+          item.inventoryItemCategory,
+          item.subItemNumber
+        ]
           .filter(Boolean)
           .join(" ")
           .toLowerCase();
@@ -649,6 +697,27 @@ function App() {
       });
   }, [storeInventory, storeInventorySearch, storeInventoryCategoryFilter, storeInventoryHealthFilter]);
 
+  const getDailyPostSubItemCountEntries = (item) => {
+    const itemId = String(item?.id || "");
+    const subItems = hasSubItems(item) ? item.subItems : [];
+    const draftMap = dailyPostDraftSubItemCounts[itemId] || {};
+
+    return subItems.map((label, index) => ({
+      subItemNumber: index + 1,
+      label,
+      postedCount: Number(draftMap[label] ?? 0)
+    }));
+  };
+
+  const getDailyPostEffectiveCount = (item) => {
+    if (hasSubItems(item)) {
+      return getDailyPostSubItemCountEntries(item).reduce((sum, entry) => sum + Number(entry.postedCount || 0), 0);
+    }
+
+    const itemId = String(item?.id || "");
+    return Number(dailyPostDraftCounts[itemId] ?? item?.inventoryCount ?? 0);
+  };
+
   const hasDailyPostDraftChanges = useMemo(() => {
     if (dailyPostInventoryItems.length === 0) {
       return false;
@@ -657,10 +726,10 @@ function App() {
     return dailyPostInventoryItems.some((item) => {
       const itemId = String(item.id);
       const initialValue = Number(dailyPostInitialCounts[itemId] ?? item.inventoryCount ?? 0);
-      const draftValue = Number(dailyPostDraftCounts[itemId] ?? item.inventoryCount ?? 0);
+      const draftValue = getDailyPostEffectiveCount(item);
       return initialValue !== draftValue;
     });
-  }, [dailyPostInventoryItems, dailyPostInitialCounts, dailyPostDraftCounts]);
+  }, [dailyPostInventoryItems, dailyPostInitialCounts, dailyPostDraftCounts, dailyPostDraftSubItemCounts]);
 
   const hasPendingDailyPostProgress = useMemo(() => {
     return (
@@ -711,100 +780,19 @@ function App() {
       return;
     }
 
-    void loadStores();
-  }, [isAuthenticated, activeTab]);
+    setLoadingData(true);
+    const loadTasks = [loadStores(), loadEmployees()];
 
-  useEffect(() => {
-    if (!isAuthenticated || activeTab !== "account" || !canManageWorkspace) {
-      return;
+    if (activeTab === "overview" || activeTab === "posts" || activeTab === "stores") {
+      loadTasks.push(loadCumulativeInventory(), loadInventoryCategories());
     }
 
-    void loadEmployees();
-  }, [isAuthenticated, activeTab, canManageWorkspace]);
-
-  useEffect(() => {
-    if (!isAuthenticated || activeTab !== "account") {
-      return;
+    if (activeTab === "posts") {
+      loadTasks.push(loadPostFeed(""));
     }
 
-    if (stores.length === 0 && !loadingStores) {
-      void loadStores();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAuthenticated, activeTab, stores.length, loadingStores]);
-
-  useEffect(() => {
-    if (!isAuthenticated || activeTab !== "posts") {
-      return;
-    }
-
-    void loadPostFeed("");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAuthenticated, activeTab]);
-
-  useEffect(() => {
-    if (!isAuthenticated || activeTab !== "overview") {
-      return;
-    }
-
-    void Promise.all([
-      loadCumulativeInventory(),
-      loadPostFeed(""),
-      canManageWorkspace ? loadEmployees() : Promise.resolve()
-    ]);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAuthenticated, activeTab, canManageWorkspace]);
-
-  useEffect(() => {
-    if (employees.length === 0) {
-      setEmployeeRoleDrafts({});
-      return;
-    }
-
-    const drafts = {};
-    employees.forEach((employee) => {
-      drafts[String(employee.id)] = employee.role;
-    });
-    setEmployeeRoleDrafts(drafts);
-  }, [employees]);
-
-  useEffect(() => {
-    setMainStoreDraftId(preferredMainStoreId);
-  }, [preferredMainStoreId, currentUser?.id]);
-
-  useEffect(() => {
-    if (!isAuthenticated || didApplyMainStoreDefaults || stores.length === 0) {
-      return;
-    }
-
-    if (preferredMainStoreId) {
-      setOverviewSelectedStoreId(preferredMainStoreId);
-      setSelectedCumulativeStoreIds([preferredMainStoreId]);
-      setDailyPostStoreId(preferredMainStoreId);
-    }
-
-    setDidApplyMainStoreDefaults(true);
-  }, [isAuthenticated, didApplyMainStoreDefaults, stores.length, preferredMainStoreId]);
-
-  useEffect(() => {
-    if (overviewSelectedStoreId === "all") {
-      return;
-    }
-
-    const exists = stores.some((store) => String(store.id) === String(overviewSelectedStoreId));
-    if (!exists) {
-      setOverviewSelectedStoreId("all");
-    }
-  }, [stores, overviewSelectedStoreId]);
-
-  useEffect(() => {
-    if (!isAuthenticated || activeTab !== "stores" || !selectedStore || storeView !== "all-inventory") {
-      return;
-    }
-
-    void Promise.all([loadCumulativeInventory(), loadInventoryCategories()]);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAuthenticated, activeTab, selectedStore, storeView]);
+    Promise.all(loadTasks).finally(() => setLoadingData(false));
+  }, [activeTab, isAuthenticated, selectedStore, overviewSelectedStoreId]);
 
   const onAuthFormChange = (event) => {
     const { name, value } = event.target;
@@ -822,6 +810,75 @@ function App() {
       ...prev,
       [name]: type === "checkbox" ? checked : value
     }));
+  };
+
+  const onAddInventorySubItem = () => {
+    const nextLabel = inventorySubItemDraft.trim();
+    if (!nextLabel) {
+      return;
+    }
+
+    setInventoryForm((prev) => {
+      const labels = parseSubItemLabels(prev.inventoryItemCategory);
+      if (!labels.includes(nextLabel)) {
+        labels.push(nextLabel);
+      }
+      return { ...prev, inventoryItemCategory: labels.join(" | ") };
+    });
+    setInventorySubItemDraft("");
+  };
+
+  const onRemoveInventorySubItem = (indexToRemove) => {
+    setInventoryForm((prev) => {
+      const labels = parseSubItemLabels(prev.inventoryItemCategory).filter((_, index) => index !== indexToRemove);
+      return { ...prev, inventoryItemCategory: labels.join(" | ") };
+    });
+  };
+
+  const onAddStoreEditSubItem = () => {
+    const nextLabel = storeEditSubItemDraft.trim();
+    if (!nextLabel) {
+      return;
+    }
+
+    setStoreInventoryEditForm((prev) => {
+      const labels = parseSubItemLabels(prev.inventoryItemCategory);
+      if (!labels.includes(nextLabel)) {
+        labels.push(nextLabel);
+      }
+      return { ...prev, inventoryItemCategory: labels.join(" | ") };
+    });
+    setStoreEditSubItemDraft("");
+  };
+
+  const onRemoveStoreEditSubItem = (indexToRemove) => {
+    setStoreInventoryEditForm((prev) => {
+      const labels = parseSubItemLabels(prev.inventoryItemCategory).filter((_, index) => index !== indexToRemove);
+      return { ...prev, inventoryItemCategory: labels.join(" | ") };
+    });
+  };
+
+  const onAddCumulativeEditSubItem = () => {
+    const nextLabel = cumulativeEditSubItemDraft.trim();
+    if (!nextLabel) {
+      return;
+    }
+
+    setEditInventoryForm((prev) => {
+      const labels = parseSubItemLabels(prev.inventoryItemCategory);
+      if (!labels.includes(nextLabel)) {
+        labels.push(nextLabel);
+      }
+      return { ...prev, inventoryItemCategory: labels.join(" | ") };
+    });
+    setCumulativeEditSubItemDraft("");
+  };
+
+  const onRemoveCumulativeEditSubItem = (indexToRemove) => {
+    setEditInventoryForm((prev) => {
+      const labels = parseSubItemLabels(prev.inventoryItemCategory).filter((_, index) => index !== indexToRemove);
+      return { ...prev, inventoryItemCategory: labels.join(" | ") };
+    });
   };
 
   const onEmployeeFormChange = (event) => {
@@ -1169,17 +1226,20 @@ function App() {
       : fallbackStoreId;
     const scopedPreferredCount = Number(item.preferredByStore?.[String(scopedStoreId)] || 0);
 
-    const key = buildInventoryItemKey(item.inventoryCategory, item.inventoryGroup, item.inventoryItemCategory, item.inventoryName);
+    const key = buildInventoryParentItemKey(item.inventoryCategory, item.inventoryGroup, item.inventoryName);
     setEditingInventoryKey(key);
     setEditInventoryForm({
       inventoryCategory: item.inventoryCategory,
       inventoryGroup: item.inventoryGroup || "",
-      inventoryItemCategory: item.inventoryItemCategory || "",
+      inventoryItemCategory: (item.subItems && item.subItems.length > 0)
+        ? item.subItems.join(" | ")
+        : item.inventoryItemCategory || "",
       inventoryName: item.inventoryName,
       preferredCount: String(scopedPreferredCount),
       editStoreId: scopedStoreId || "all",
       deleteStoreId: scopedStoreId || "all"
     });
+    setCumulativeEditSubItemDraft("");
   };
 
   const onEditInventoryFormChange = (event) => {
@@ -1237,6 +1297,7 @@ function App() {
     setDailyPostInventoryItems([]);
     setDailyPostInitialCounts({});
     setDailyPostDraftCounts({});
+    setDailyPostDraftSubItemCounts({});
     setDailyPostCurrentIndex(0);
     setLoadingDailyPostItems(false);
     setSubmittingDailyPost(false);
@@ -1287,6 +1348,7 @@ function App() {
     setDailyPostInventoryItems([]);
     setDailyPostInitialCounts({});
     setDailyPostDraftCounts({});
+    setDailyPostDraftSubItemCounts({});
     setDailyPostCurrentIndex(0);
     setDailyPostStep("setup");
     await loadDailyPostCategories(nextStoreId);
@@ -1320,17 +1382,27 @@ function App() {
 
       const initialCounts = {};
       const draftCounts = {};
+      const draftSubItemCounts = {};
 
       items.forEach((item) => {
         const key = String(item.id);
         const count = Number(item.inventoryCount || 0);
         initialCounts[key] = count;
         draftCounts[key] = String(count);
+
+        if (hasSubItems(item)) {
+          const subDraft = {};
+          item.subItems.forEach((label, index) => {
+            subDraft[label] = index === 0 ? String(count) : "0";
+          });
+          draftSubItemCounts[key] = subDraft;
+        }
       });
 
       setDailyPostInventoryItems(items);
       setDailyPostInitialCounts(initialCounts);
       setDailyPostDraftCounts(draftCounts);
+      setDailyPostDraftSubItemCounts(draftSubItemCounts);
       setDailyPostCurrentIndex(0);
       setDailyPostStep("entry");
     } catch (error) {
@@ -1347,16 +1419,35 @@ function App() {
     }));
   };
 
+  const onDailyPostSubItemCountChange = (itemId, label, value) => {
+    const key = String(itemId);
+    setDailyPostDraftSubItemCounts((prev) => ({
+      ...prev,
+      [key]: {
+        ...(prev[key] || {}),
+        [label]: value
+      }
+    }));
+  };
+
   const onDailyPostNext = () => {
     const currentItem = dailyPostInventoryItems[dailyPostCurrentIndex];
     if (!currentItem) {
       return;
     }
 
-    const draftValue = dailyPostDraftCounts[String(currentItem.id)] ?? "0";
-    if (Number.isNaN(Number(draftValue))) {
-      setMessage("Inventory count must be a valid number.");
-      return;
+    if (hasSubItems(currentItem)) {
+      const invalidSubItem = getDailyPostSubItemCountEntries(currentItem).find((entry) => Number.isNaN(Number(entry.postedCount)));
+      if (invalidSubItem) {
+        setMessage(`Sub-item count must be a valid number for ${invalidSubItem.label}.`);
+        return;
+      }
+    } else {
+      const draftValue = dailyPostDraftCounts[String(currentItem.id)] ?? "0";
+      if (Number.isNaN(Number(draftValue))) {
+        setMessage("Inventory count must be a valid number.");
+        return;
+      }
     }
 
     const nextIndex = dailyPostCurrentIndex + 1;
@@ -1375,10 +1466,18 @@ function App() {
     }
 
     for (const item of dailyPostInventoryItems) {
-      const value = dailyPostDraftCounts[String(item.id)] ?? "0";
-      if (Number.isNaN(Number(value))) {
-        setMessage(`Invalid number for ${item.inventoryName}.`);
-        return;
+      if (hasSubItems(item)) {
+        const invalidSubItem = getDailyPostSubItemCountEntries(item).find((entry) => Number.isNaN(Number(entry.postedCount)));
+        if (invalidSubItem) {
+          setMessage(`Invalid sub-item count for ${item.inventoryName} / ${invalidSubItem.label}.`);
+          return;
+        }
+      } else {
+        const value = dailyPostDraftCounts[String(item.id)] ?? "0";
+        if (Number.isNaN(Number(value))) {
+          setMessage(`Invalid number for ${item.inventoryName}.`);
+          return;
+        }
       }
     }
 
@@ -1387,7 +1486,8 @@ function App() {
       await Promise.all(
         dailyPostInventoryItems.map((item) =>
           api.patch(`/api/stores/${dailyPostStoreId}/inventory/${item.id}/count`, {
-            inventoryCount: Number(dailyPostDraftCounts[String(item.id)] ?? 0)
+            inventoryCount: getDailyPostEffectiveCount(item),
+            subItemCounts: hasSubItems(item) ? getDailyPostSubItemCountEntries(item) : []
           })
         )
       );
@@ -1409,10 +1509,12 @@ function App() {
         inventoryCategory: item.inventoryCategory,
         inventoryGroup: item.inventoryGroup || null,
         inventoryItemCategory: item.inventoryItemCategory || null,
+        subItems: item.subItems || parseSubItemLabels(item.inventoryItemCategory),
         inventoryName: item.inventoryName,
         newInventoryCategory: editInventoryForm.inventoryCategory,
         newInventoryGroup: editInventoryForm.inventoryGroup.trim() || null,
-        newInventoryItemCategory: editInventoryForm.inventoryItemCategory.trim() || null,
+        newInventoryItemCategory: serializeSubItemLabels(editInventoryForm.inventoryItemCategory),
+        newSubItems: parseSubItemLabels(editInventoryForm.inventoryItemCategory),
         newInventoryName: editInventoryForm.inventoryName,
         preferredCount: Number(editInventoryForm.preferredCount),
         storeId: editInventoryForm.editStoreId === "all" ? null : Number(editInventoryForm.editStoreId)
@@ -1431,7 +1533,7 @@ function App() {
   };
 
   const onDeleteInventory = async (item, storeOptions) => {
-    const rowKey = buildInventoryItemKey(item.inventoryCategory, item.inventoryGroup, item.inventoryItemCategory, item.inventoryName);
+    const rowKey = buildInventoryParentItemKey(item.inventoryCategory, item.inventoryGroup, item.inventoryName);
     const targetStoreId = editInventoryForm.deleteStoreId;
     const scopedStore =
       targetStoreId === "all"
@@ -1493,7 +1595,8 @@ function App() {
       const payload = {
         inventoryCategory: selectedCategory,
         inventoryGroup: inventoryForm.inventoryGroup.trim() || null,
-        inventoryItemCategory: inventoryForm.inventoryItemCategory.trim() || null,
+        inventoryItemCategory: serializeSubItemLabels(inventoryForm.inventoryItemCategory),
+        subItems: parseSubItemLabels(inventoryForm.inventoryItemCategory),
         inventoryName: inventoryForm.inventoryName,
         inventoryCount:
           inventoryForm.inventoryCount === "" ? null : Number(inventoryForm.inventoryCount),
@@ -1512,6 +1615,7 @@ function App() {
         preferredCount: "",
         addToAllStores: false
       });
+      setInventorySubItemDraft("");
       await loadInventoryCategories();
       setShowInventoryForm(false);
       setMessage(response.data.message);
@@ -1525,13 +1629,16 @@ function App() {
     setStoreInventoryEditForm({
       inventoryCategory: item.inventoryCategory || "",
       inventoryGroup: item.inventoryGroup || "",
-      inventoryItemCategory: item.inventoryItemCategory || "",
+      inventoryItemCategory: (item.subItems && item.subItems.length > 0)
+        ? item.subItems.join(" | ")
+        : item.inventoryItemCategory || "",
       inventoryName: item.inventoryName || "",
       inventoryCount: String(item.inventoryCount ?? 0),
       preferredCount: String(item.preferredCount ?? 0),
       updateScope: "current",
       deleteScope: "current"
     });
+    setStoreEditSubItemDraft("");
   };
 
   const onStoreInventoryEditFormChange = (event) => {
@@ -1546,12 +1653,14 @@ function App() {
     setStoreInventoryEditForm({
       inventoryCategory: "",
       inventoryGroup: "",
+      inventoryItemCategory: "",
       inventoryName: "",
       inventoryCount: "0",
       preferredCount: "0",
       updateScope: "current",
       deleteScope: "current"
     });
+    setStoreEditSubItemDraft("");
   };
 
   const onSaveStoreInventoryEdit = async (itemId) => {
@@ -1592,10 +1701,12 @@ function App() {
           inventoryCategory: existingItem.inventoryCategory,
           inventoryGroup: existingItem.inventoryGroup || null,
           inventoryItemCategory: existingItem.inventoryItemCategory || null,
+          subItems: existingItem.subItems || parseSubItemLabels(existingItem.inventoryItemCategory),
           inventoryName: existingItem.inventoryName,
           newInventoryCategory: storeInventoryEditForm.inventoryCategory.trim(),
           newInventoryGroup: storeInventoryEditForm.inventoryGroup.trim() || null,
-          newInventoryItemCategory: storeInventoryEditForm.inventoryItemCategory.trim() || null,
+          newInventoryItemCategory: serializeSubItemLabels(storeInventoryEditForm.inventoryItemCategory),
+          newSubItems: parseSubItemLabels(storeInventoryEditForm.inventoryItemCategory),
           newInventoryName: storeInventoryEditForm.inventoryName.trim(),
           preferredCount: Number(storeInventoryEditForm.preferredCount),
           storeId: null
@@ -1604,7 +1715,8 @@ function App() {
         response = await api.patch(`/api/stores/${selectedStore.id}/inventory/${itemId}`, {
           inventoryCategory: storeInventoryEditForm.inventoryCategory.trim(),
           inventoryGroup: storeInventoryEditForm.inventoryGroup.trim() || null,
-          inventoryItemCategory: storeInventoryEditForm.inventoryItemCategory.trim() || null,
+          inventoryItemCategory: serializeSubItemLabels(storeInventoryEditForm.inventoryItemCategory),
+          subItems: parseSubItemLabels(storeInventoryEditForm.inventoryItemCategory),
           inventoryName: storeInventoryEditForm.inventoryName.trim(),
           inventoryCount: Number(storeInventoryEditForm.inventoryCount),
           preferredCount: Number(storeInventoryEditForm.preferredCount)
@@ -1869,7 +1981,7 @@ function App() {
                           ? Math.max((item.shortage / overviewRadarData.maxShortage) * 100, 6)
                           : 0;
                         return (
-                          <div key={buildInventoryItemKey(item.inventoryCategory, item.inventoryGroup, item.inventoryItemCategory, item.inventoryName)} className="radar-bar-row">
+                          <div key={buildInventoryParentItemKey(item.inventoryCategory, item.inventoryGroup, item.inventoryName)} className="radar-bar-row">
                             <div className="radar-bar-labels">
                               <span>{item.inventoryName}</span>
                               <strong>{item.shortage}</strong>
@@ -1914,12 +2026,12 @@ function App() {
 
                 <div className="radar-insight-list" aria-label="Stock health item details">
                   {overviewInventoryRows.slice(0, 8).map((item) => (
-                    <article key={buildInventoryItemKey(item.inventoryCategory, item.inventoryGroup, item.inventoryItemCategory, item.inventoryName)} className="radar-insight-card">
+                    <article key={buildInventoryParentItemKey(item.inventoryCategory, item.inventoryGroup, item.inventoryName)} className="radar-insight-card">
                       <div className="radar-insight-head">
                         <div>
                           <p className="radar-item-name">{item.inventoryName}</p>
                           <p className="radar-item-category">{formatInventoryCategoryLabel(item.inventoryCategory, item.inventoryGroup)}</p>
-                          <p className="radar-item-subcategory">{formatInventoryItemCategoryLabel(item.inventoryItemCategory)}</p>
+                          <p className="radar-item-subcategory">{formatInventoryItemCategoryLabel(item.inventoryItemCategory, item.subItemNumber, item.subItems)}</p>
                         </div>
                         <span className={item.shortage > 0 ? "status-chip danger" : "status-chip good"}>
                           {item.status}
@@ -2163,7 +2275,7 @@ function App() {
                   </thead>
                   <tbody>
                     {filteredCumulativeInventory.map((item) => {
-                      const rowKey = buildInventoryItemKey(item.inventoryCategory, item.inventoryGroup, item.inventoryItemCategory, item.inventoryName);
+                      const rowKey = buildInventoryParentItemKey(item.inventoryCategory, item.inventoryGroup, item.inventoryName);
                       const deleteStoreOptions = storeColumns.filter((store) =>
                         Object.prototype.hasOwnProperty.call(item.countsByStore || {}, String(store.id))
                       );
@@ -2181,7 +2293,14 @@ function App() {
                             <div className="inventory-name-stack">
                               <span>{item.inventoryName}</span>
                               <p className="tiny">{formatInventoryCategoryLabel(item.inventoryCategory, item.inventoryGroup)}</p>
-                              <p className="tiny">{formatInventoryItemCategoryLabel(item.inventoryItemCategory)}</p>
+                              {Array.isArray(item.subItems) && item.subItems.length > 0 ? (
+                                <details className="subitem-details">
+                                  <summary>{`Sub-items (${item.subItems.length})`}</summary>
+                                  <p className="tiny">{item.subItems.map((label, index) => `#${index + 1} ${label}`).join(" | ")}</p>
+                                </details>
+                              ) : (
+                                <p className="tiny">{formatInventoryItemCategoryLabel(item.inventoryItemCategory, item.subItemNumber, item.subItems)}</p>
+                              )}
                             </div>
                           </td>
                           {visibleStoreColumns.map((store) => {
@@ -2299,13 +2418,36 @@ function App() {
                   )}
                 </label>
                 <label>
-                  Item Category (Optional)
-                  <input
-                    name="inventoryItemCategory"
-                    value={inventoryForm.inventoryItemCategory}
-                    onChange={onInventoryFormChange}
-                    placeholder="Optional: Men's, Women's, Kids"
-                  />
+                  Sub Item Label (Optional)
+                  <div className="table-actions">
+                    <input
+                      value={inventorySubItemDraft}
+                      onChange={(event) => setInventorySubItemDraft(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          onAddInventorySubItem();
+                        }
+                      }}
+                      placeholder="Type sub item label"
+                    />
+                    <button type="button" className="action-btn" onClick={onAddInventorySubItem}>Add Sub Item</button>
+                  </div>
+                  {parseSubItemLabels(inventoryForm.inventoryItemCategory).length > 0 && (
+                    <div className="table-actions">
+                      {parseSubItemLabels(inventoryForm.inventoryItemCategory).map((label, index) => (
+                        <button
+                          key={`${label}-${index}`}
+                          type="button"
+                          className="signout-btn"
+                          onClick={() => onRemoveInventorySubItem(index)}
+                        >
+                          {`#${index + 1} ${label} ×`}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <p className="tiny">Click Add Sub Item for each entry. You can remove any added sub item.</p>
                 </label>
                 <label>
                   Inventory Name
@@ -2377,7 +2519,7 @@ function App() {
                       type="text"
                       value={inventoryViewSearch}
                       onChange={(event) => setInventoryViewSearch(event.target.value)}
-                      placeholder="Search item, category, group, or item category"
+                      placeholder="Search item, category, group, or sub item"
                     />
                   </label>
 
@@ -2439,7 +2581,14 @@ function App() {
                               <td data-label="Inventory Name">
                                 <div className="inventory-name-stack">
                                   <span>{item.inventoryName}</span>
-                                  <p className="tiny">{formatInventoryItemCategoryLabel(item.inventoryItemCategory)}</p>
+                                  {Array.isArray(item.subItems) && item.subItems.length > 0 ? (
+                                    <details className="subitem-details">
+                                      <summary>{`Sub-items (${item.subItems.length})`}</summary>
+                                      <p className="tiny">{item.subItems.map((label, index) => `#${index + 1} ${label}`).join(" | ")}</p>
+                                    </details>
+                                  ) : (
+                                    <p className="tiny">{formatInventoryItemCategoryLabel(item.inventoryItemCategory, item.subItemNumber, item.subItems)}</p>
+                                  )}
                                 </div>
                               </td>
                               <td data-label="Inventory Count">{item.inventoryCount}</td>
@@ -2546,7 +2695,7 @@ function App() {
                     type="text"
                     value={storeInventorySearch}
                     onChange={(event) => setStoreInventorySearch(event.target.value)}
-                    placeholder="Search item, item category, or category"
+                    placeholder="Search item, sub item, or category"
                   />
                 </label>
 
@@ -2606,7 +2755,14 @@ function App() {
                       <td data-label="Inventory Name">
                         <div className="inventory-name-stack">
                           <span>{item.inventoryName}</span>
-                          <p className="tiny">{formatInventoryItemCategoryLabel(item.inventoryItemCategory)}</p>
+                          {Array.isArray(item.subItems) && item.subItems.length > 0 ? (
+                            <details className="subitem-details">
+                              <summary>{`Sub-items (${item.subItems.length})`}</summary>
+                              <p className="tiny">{item.subItems.map((label, index) => `#${index + 1} ${label}`).join(" | ")}</p>
+                            </details>
+                          ) : (
+                            <p className="tiny">{formatInventoryItemCategoryLabel(item.inventoryItemCategory, item.subItemNumber, item.subItems)}</p>
+                          )}
                         </div>
                       </td>
                       <td data-label="Inventory Count">{item.inventoryCount}</td>
@@ -2907,6 +3063,8 @@ function App() {
           inventoryCategory: post.inventoryCategory,
           inventoryGroup: post.inventoryGroup,
           inventoryItemCategory: post.inventoryItemCategory,
+          subItemNumber: post.subItemNumber,
+          subItemCounts: post.subItemCounts || [],
           inventoryName: post.inventoryName,
           postedCount: post.postedCount
         });
@@ -2926,6 +3084,8 @@ function App() {
               inventoryCategory: post.inventoryCategory,
               inventoryGroup: post.inventoryGroup,
               inventoryItemCategory: post.inventoryItemCategory,
+              subItemNumber: post.subItemNumber,
+              subItemCounts: post.subItemCounts || [],
               inventoryName: post.inventoryName,
               postedCount: post.postedCount
             }
@@ -3016,10 +3176,19 @@ function App() {
                     <div className="feed-items">
                       {group.items.map((entry) => (
                         <div key={entry.id} className="feed-line">
-                          <span>
-                            {formatInventoryCategoryLabel(entry.inventoryCategory, entry.inventoryGroup)}: {entry.inventoryName}
-                            {entry.inventoryItemCategory ? ` / ${formatInventoryItemCategoryLabel(entry.inventoryItemCategory)}` : ""}
-                          </span>
+                          <div>
+                            <span>
+                              {formatInventoryCategoryLabel(entry.inventoryCategory, entry.inventoryGroup)}: {entry.inventoryName}
+                              {entry.inventoryItemCategory || entry.subItemNumber ? ` / ${formatInventoryItemCategoryLabel(entry.inventoryItemCategory, entry.subItemNumber)}` : ""}
+                            </span>
+                            {Array.isArray(entry.subItemCounts) && entry.subItemCounts.length > 0 && (
+                              <p className="tiny">
+                                {entry.subItemCounts
+                                  .map((sub) => `#${sub.subItemNumber} ${sub.label}: ${sub.postedCount}`)
+                                  .join(" | ")}
+                              </p>
+                            )}
+                          </div>
                           <strong>{entry.postedCount}</strong>
                         </div>
                       ))}
@@ -3101,17 +3270,34 @@ function App() {
                     <p className="tiny">Phone Name</p>
                     <h3>{currentItem.inventoryName}</h3>
                     <p className="tiny">Category: {formatInventoryCategoryLabel(currentItem.inventoryCategory, currentItem.inventoryGroup)}</p>
-                    <p className="tiny">Item Category: {formatInventoryItemCategoryLabel(currentItem.inventoryItemCategory)}</p>
+                    <p className="tiny">Sub Item: {formatInventoryItemCategoryLabel(currentItem.inventoryItemCategory, currentItem.subItemNumber, currentItem.subItems)}</p>
                     <p className="tiny">Preferred: {currentItem.preferredCount}</p>
 
-                    <label>
-                      <span className="icon-text"><UIIcon name="inventory" />Inventory Count</span>
-                      <input
-                        type="number"
-                        value={dailyPostDraftCounts[String(currentItem.id)] ?? "0"}
-                        onChange={(event) => onDailyPostCountChange(currentItem.id, event.target.value)}
-                      />
-                    </label>
+                    {hasSubItems(currentItem) ? (
+                      <div className="section-block">
+                        <p className="tiny">Enter count for each sub item:</p>
+                        {currentItem.subItems.map((label) => (
+                          <label key={`${currentItem.id}-${label}`}>
+                            <span className="icon-text"><UIIcon name="inventory" />{label}</span>
+                            <input
+                              type="number"
+                              value={dailyPostDraftSubItemCounts[String(currentItem.id)]?.[label] ?? "0"}
+                              onChange={(event) => onDailyPostSubItemCountChange(currentItem.id, label, event.target.value)}
+                            />
+                          </label>
+                        ))}
+                        <p className="tiny">Total for item: {getDailyPostEffectiveCount(currentItem)}</p>
+                      </div>
+                    ) : (
+                      <label>
+                        <span className="icon-text"><UIIcon name="inventory" />Inventory Count</span>
+                        <input
+                          type="number"
+                          value={dailyPostDraftCounts[String(currentItem.id)] ?? "0"}
+                          onChange={(event) => onDailyPostCountChange(currentItem.id, event.target.value)}
+                        />
+                      </label>
+                    )}
 
                     <div className="section-row">
                       <p className="tiny">Item {dailyPostCurrentIndex + 1} of {dailyPostInventoryItems.length}</p>
@@ -3147,7 +3333,7 @@ function App() {
                           <tr>
                             <th>Phone Name</th>
                             <th>Category</th>
-                            <th>Item Category</th>
+                            <th>Sub Item</th>
                             <th>Preferred</th>
                             <th>Count</th>
                             <th>Action</th>
@@ -3158,14 +3344,30 @@ function App() {
                             <tr key={item.id}>
                               <td>{item.inventoryName}</td>
                               <td>{formatInventoryCategoryLabel(item.inventoryCategory, item.inventoryGroup)}</td>
-                              <td>{formatInventoryItemCategoryLabel(item.inventoryItemCategory)}</td>
+                              <td>{formatInventoryItemCategoryLabel(item.inventoryItemCategory, item.subItemNumber, item.subItems)}</td>
                               <td>{item.preferredCount}</td>
                               <td>
-                                <input
-                                  type="number"
-                                  value={dailyPostDraftCounts[String(item.id)] ?? "0"}
-                                  onChange={(event) => onDailyPostCountChange(item.id, event.target.value)}
-                                />
+                                {hasSubItems(item) ? (
+                                  <div>
+                                    {item.subItems.map((label) => (
+                                      <label key={`${item.id}-${label}`} className="tiny">
+                                        {label}
+                                        <input
+                                          type="number"
+                                          value={dailyPostDraftSubItemCounts[String(item.id)]?.[label] ?? "0"}
+                                          onChange={(event) => onDailyPostSubItemCountChange(item.id, label, event.target.value)}
+                                        />
+                                      </label>
+                                    ))}
+                                    <p className="tiny">Total: {getDailyPostEffectiveCount(item)}</p>
+                                  </div>
+                                ) : (
+                                  <input
+                                    type="number"
+                                    value={dailyPostDraftCounts[String(item.id)] ?? "0"}
+                                    onChange={(event) => onDailyPostCountChange(item.id, event.target.value)}
+                                  />
+                                )}
                               </td>
                               <td>
                                 <button
@@ -3347,13 +3549,36 @@ function App() {
                     />
                   </label>
                   <label>
-                    <span className="icon-text"><UIIcon name="tag" />Item Category</span>
-                    <input
-                      name="inventoryItemCategory"
-                      value={storeInventoryEditForm.inventoryItemCategory}
-                      onChange={onStoreInventoryEditFormChange}
-                      placeholder="Optional item-specific category"
-                    />
+                    <span className="icon-text"><UIIcon name="tag" />Sub Item Label (Optional)</span>
+                    <div className="table-actions">
+                      <input
+                        value={storeEditSubItemDraft}
+                        onChange={(event) => setStoreEditSubItemDraft(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            onAddStoreEditSubItem();
+                          }
+                        }}
+                        placeholder="Type sub item label"
+                      />
+                      <button type="button" className="action-btn" onClick={onAddStoreEditSubItem}>Add Sub Item</button>
+                    </div>
+                    {parseSubItemLabels(storeInventoryEditForm.inventoryItemCategory).length > 0 && (
+                      <div className="table-actions">
+                        {parseSubItemLabels(storeInventoryEditForm.inventoryItemCategory).map((label, index) => (
+                          <button
+                            key={`${label}-${index}`}
+                            type="button"
+                            className="signout-btn"
+                            onClick={() => onRemoveStoreEditSubItem(index)}
+                          >
+                            {`#${index + 1} ${label} ×`}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    <p className="tiny">Add multiple sub items. Sub-item numbering is automatic.</p>
                   </label>
                   <label>
                     <span className="icon-text"><UIIcon name="inventory" />Inventory Name</span>
@@ -3487,13 +3712,36 @@ function App() {
                     />
                   </label>
                   <label>
-                    <span className="icon-text"><UIIcon name="tag" />Item Category</span>
-                    <input
-                      name="inventoryItemCategory"
-                      value={editInventoryForm.inventoryItemCategory}
-                      onChange={onEditInventoryFormChange}
-                      placeholder="Optional item-specific category"
-                    />
+                    <span className="icon-text"><UIIcon name="tag" />Sub Item Label (Optional)</span>
+                    <div className="table-actions">
+                      <input
+                        value={cumulativeEditSubItemDraft}
+                        onChange={(event) => setCumulativeEditSubItemDraft(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            onAddCumulativeEditSubItem();
+                          }
+                        }}
+                        placeholder="Type sub item label"
+                      />
+                      <button type="button" className="action-btn" onClick={onAddCumulativeEditSubItem}>Add Sub Item</button>
+                    </div>
+                    {parseSubItemLabels(editInventoryForm.inventoryItemCategory).length > 0 && (
+                      <div className="table-actions">
+                        {parseSubItemLabels(editInventoryForm.inventoryItemCategory).map((label, index) => (
+                          <button
+                            key={`${label}-${index}`}
+                            type="button"
+                            className="signout-btn"
+                            onClick={() => onRemoveCumulativeEditSubItem(index)}
+                          >
+                            {`#${index + 1} ${label} ×`}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    <p className="tiny">Add multiple sub items. Sub-item numbering is automatic.</p>
                   </label>
                   <label>
                     <span className="icon-text"><UIIcon name="inventory" />Inventory Name</span>

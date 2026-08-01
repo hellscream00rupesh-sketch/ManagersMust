@@ -10,7 +10,10 @@
     "migrate:main-store": "node scripts/migrate-main-store.js",
     "migrate:inventory-groups": "node scripts/migrate-inventory-groups.js",
     "migrate:add-inventory-item-category": "node scripts/migrate-add-inventory-item-category.js",
-    "migrate:remove-inventory-item-category": "node scripts/migrate-remove-inventory-item-category.js"
+    "migrate:remove-inventory-item-category": "node scripts/migrate-remove-inventory-item-category.js",
+    "migrate:sub-items": "node scripts/migrate-sub-items.js",
+    "migrate:sub-item-table": "node scripts/migrate-sub-item-table.js",
+    "migrate:post-sub-item-counts": "node scripts/migrate-post-sub-item-counts.js"
   },
   "keywords": [],
   "author": "",
