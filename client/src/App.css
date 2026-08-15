@@ -25,6 +25,7 @@
   --success-soft: linear-gradient(120deg, rgba(125, 168, 137, 0.34), rgba(210, 237, 221, 0.56));
   --danger: #9d4a40;
   --danger-soft: linear-gradient(120deg, rgba(223, 151, 136, 0.34), rgba(245, 210, 186, 0.45));
+  --bottom-nav-clearance: 6.25rem;
 }
 
 .page {
@@ -400,7 +401,7 @@ select:focus {
 .dashboard-page {
   display: block;
   padding: 1rem;
-  padding-bottom: 7rem;
+  padding-bottom: calc(var(--bottom-nav-clearance) + env(safe-area-inset-bottom));
 }
 
 .dashboard-card {
@@ -1221,13 +1222,14 @@ label .ui-icon,
   backdrop-filter: blur(4px);
   display: grid;
   place-items: center;
-  z-index: 160;
+  z-index: 300;
   padding: 1rem;
+  padding-bottom: calc(var(--bottom-nav-clearance) + env(safe-area-inset-bottom));
 }
 
 .modal-card {
   width: min(920px, 100%);
-  max-height: min(90vh, 860px);
+  max-height: min(calc(100vh - var(--bottom-nav-clearance) - 2rem - env(safe-area-inset-bottom)), 860px);
   overflow: auto;
   border: 1px solid var(--line);
   border-radius: 18px;
@@ -1250,6 +1252,7 @@ label .ui-icon,
 .modal-body {
   display: grid;
   gap: 0.85rem;
+  padding-bottom: max(0.4rem, env(safe-area-inset-bottom));
 }
 
 .modal-card .overview-filter-grid {
@@ -1270,6 +1273,15 @@ label .ui-icon,
 
 .inventory-edit-modal-actions .danger-btn {
   min-width: 6.5rem;
+}
+
+.verify-actions-row {
+  position: sticky;
+  bottom: max(0.35rem, env(safe-area-inset-bottom));
+  z-index: 2;
+  padding-top: 0.55rem;
+  margin-top: 0.45rem;
+  background: linear-gradient(180deg, rgba(247, 241, 233, 0.15), rgba(247, 241, 233, 0.96));
 }
 
 .bottom-nav {

@@ -3123,6 +3123,7 @@ function App() {
 
   const renderPosts = () => {
     const currentItem = dailyPostInventoryItems[dailyPostCurrentIndex];
+    const showDailyPostSubItemCountColumn = dailyPostInventoryItems.some((item) => hasSubItems(item));
     const groupedPostFeed = [];
 
     filteredPostFeed.forEach((post) => {
@@ -3398,7 +3399,7 @@ function App() {
                     <div className="section-row">
                       <div>
                         <p className="section-title icon-text"><UIIcon name="check" />Verify Daily Entries</p>
-                        <p className="section-sub">Edit any row before final submit.</p>
+                        <p className="section-sub">Review counts, then edit each item if needed.</p>
                       </div>
                     </div>
 
@@ -3407,9 +3408,7 @@ function App() {
                         <thead>
                           <tr>
                             <th>Phone Name</th>
-                            <th>Category</th>
-                            <th>Sub Item</th>
-                            <th>Preferred</th>
+                            {showDailyPostSubItemCountColumn && <th>Sub Item Count</th>}
                             <th>Count</th>
                             <th>Action</th>
                           </tr>
@@ -3418,31 +3417,17 @@ function App() {
                           {dailyPostInventoryItems.map((item, index) => (
                             <tr key={item.id}>
                               <td>{item.inventoryName}</td>
-                              <td>{formatInventoryCategoryLabel(item.inventoryCategory, item.inventoryGroup)}</td>
-                              <td>{formatInventoryItemCategoryLabel(item.inventoryItemCategory, item.subItemNumber, item.subItems)}</td>
-                              <td>{item.preferredCount}</td>
+                              {showDailyPostSubItemCountColumn && (
+                                <td>
+                                  {hasSubItems(item)
+                                    ? getDailyPostSubItemCountEntries(item)
+                                      .map((entry) => `${entry.label}: ${entry.postedCount}`)
+                                      .join(" | ")
+                                    : "-"}
+                                </td>
+                              )}
                               <td>
-                                {hasSubItems(item) ? (
-                                  <div>
-                                    {item.subItems.map((label) => (
-                                      <label key={`${item.id}-${label}`} className="tiny">
-                                        {label}
-                                        <input
-                                          type="number"
-                                          value={dailyPostDraftSubItemCounts[String(item.id)]?.[label] ?? "0"}
-                                          onChange={(event) => onDailyPostSubItemCountChange(item.id, label, event.target.value)}
-                                        />
-                                      </label>
-                                    ))}
-                                    <p className="tiny">Total: {getDailyPostEffectiveCount(item)}</p>
-                                  </div>
-                                ) : (
-                                  <input
-                                    type="number"
-                                    value={dailyPostDraftCounts[String(item.id)] ?? "0"}
-                                    onChange={(event) => onDailyPostCountChange(item.id, event.target.value)}
-                                  />
-                                )}
+                                <strong>{getDailyPostEffectiveCount(item)}</strong>
                               </td>
                               <td>
                                 <button
@@ -3462,7 +3447,7 @@ function App() {
                       </table>
                     </div>
 
-                    <div className="section-row">
+                    <div className="section-row verify-actions-row">
                       <button type="button" className="signout-btn" onClick={() => setDailyPostStep("entry")}>
                         Back to Entry
                       </button>
