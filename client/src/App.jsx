@@ -305,6 +305,7 @@ function App() {
   const [selectedStore, setSelectedStore] = useState(null);
   const [storeView, setStoreView] = useState("detail");
   const [allInventoryCategory, setAllInventoryCategory] = useState("All");
+  const [allInventorySearch, setAllInventorySearch] = useState("");
   const [cumulativeInventory, setCumulativeInventory] = useState([]);
   const [cumulativeStores, setCumulativeStores] = useState([]);
   const [selectedCumulativeStoreIds, setSelectedCumulativeStoreIds] = useState([]);
@@ -533,9 +534,29 @@ function App() {
       allInventoryCategory === "All"
         ? cumulativeInventory
         : cumulativeInventory.filter((item) => item.inventoryCategory === allInventoryCategory);
+    const query = allInventorySearch.trim().toLowerCase();
 
-    return [...base].sort((a, b) => String(a.inventoryName).localeCompare(String(b.inventoryName)));
-  }, [allInventoryCategory, cumulativeInventory]);
+    return base
+      .filter((item) => {
+        if (!query) {
+          return true;
+        }
+
+        const searchable = [
+          item.inventoryName,
+          item.inventoryCategory,
+          item.inventoryGroup,
+          item.inventoryItemCategory,
+          item.subItemNumber,
+          ...(Array.isArray(item.subItems) ? item.subItems.filter((subItem) => typeof subItem === "string") : [])
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        return searchable.includes(query);
+      })
+      .sort((a, b) => String(a.inventoryName).localeCompare(String(b.inventoryName)));
+  }, [allInventoryCategory, allInventorySearch, cumulativeInventory]);
 
   const cumulativeInventoryStoreColumns = cumulativeStores.length > 0 ? cumulativeStores : stores;
 
@@ -2260,6 +2281,7 @@ function App() {
                 type="button"
                 className="signout-btn"
                 onClick={() => {
+                  setAllInventorySearch("");
                   setInventoryViewSearch("");
                   setInventoryViewCategoryFilter("All");
                   setStoreView("detail");
@@ -2322,12 +2344,26 @@ function App() {
               ))}
             </div>
 
+            <label className="search-label cumulative-inventory-search">
+              <span className="icon-text"><UIIcon name="search" />Search inventory</span>
+              <input
+                type="text"
+                value={allInventorySearch}
+                onChange={(event) => setAllInventorySearch(event.target.value)}
+                placeholder="Search name, category, group, or sub-item"
+              />
+            </label>
+
             {loadingCumulativeInventory && <LoadingIndicator label="Loading inventory..." />}
 
             {!loadingCumulativeInventory && filteredCumulativeInventory.length === 0 && (
               <article className="empty-state-card">
                 <h3>No inventory found</h3>
-                <p>There are no inventory items in this category yet.</p>
+                <p>
+                  {allInventorySearch.trim()
+                    ? "Try another search term or category."
+                    : "There are no inventory items in this category yet."}
+                </p>
               </article>
             )}
 
