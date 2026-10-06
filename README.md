@@ -70,8 +70,10 @@ Run the card data checks from `client` with `node --test src/inventoryCardData.t
 
 Dashboard navigation is hidden by default. Use the circular primary-orange,
 right-pointing arrow at the bottom-left to open the animated horizontal bottom
-bar. The bar sits above the toggle so both remain accessible. Selecting a section, clicking outside, pressing
-Escape, or moving keyboard focus out of the panel closes it. The panel supports
+bar. The bar sits above the toggle so both remain accessible. Selecting a section,
+clicking outside, pressing Escape, or moving keyboard focus to another element
+outside the panel closes it. Touch-induced focus loss without a new focused
+element keeps the panel open until the section tap completes. The panel supports
 keyboard navigation and respects reduced-motion preferences.
 
 ## 4) Netlify + API Hosting

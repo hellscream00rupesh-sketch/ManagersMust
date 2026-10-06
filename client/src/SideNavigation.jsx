@@ -12,6 +12,7 @@ export default function SideNavigation({ items, activeTab, onNavigate, renderIco
     }
 
     panelRef.current.querySelector('[aria-current="page"]')?.focus();
+    let focusCheck;
 
     const onPointerDown = (event) => {
       if (!containerRef.current.contains(event.target)) {
@@ -23,12 +24,20 @@ export default function SideNavigation({ items, activeTab, onNavigate, renderIco
         event.preventDefault();
         setIsOpen(false);
         toggleRef.current.focus();
+      } else if (event.key === "Tab") {
+        cancelAnimationFrame(focusCheck);
+        focusCheck = requestAnimationFrame(() => {
+          if (!containerRef.current.contains(document.activeElement)) {
+            setIsOpen(false);
+          }
+        });
       }
     };
 
     document.addEventListener("pointerdown", onPointerDown);
     document.addEventListener("keydown", onKeyDown);
     return () => {
+      cancelAnimationFrame(focusCheck);
       document.removeEventListener("pointerdown", onPointerDown);
       document.removeEventListener("keydown", onKeyDown);
     };
@@ -39,7 +48,8 @@ export default function SideNavigation({ items, activeTab, onNavigate, renderIco
       className={`side-navigation${isOpen ? " open" : ""}`}
       ref={containerRef}
       onBlur={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget)) {
+        // Touch taps can blur a button without focusing the next one before its click.
+        if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget)) {
           setIsOpen(false);
         }
       }}
