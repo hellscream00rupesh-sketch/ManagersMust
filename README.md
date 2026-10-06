@@ -66,6 +66,14 @@ message; negative quantities remain visible without a misleading pie chart.
 
 Run the card data checks from `client` with `node --test src/inventoryCardData.test.js`.
 
+### Section navigation
+
+Dashboard navigation is hidden by default. Use the circular primary-orange,
+right-pointing arrow at the bottom-left to open the animated horizontal bottom
+bar. The bar sits above the toggle so both remain accessible. Selecting a section, clicking outside, pressing
+Escape, or moving keyboard focus out of the panel closes it. The panel supports
+keyboard navigation and respects reduced-motion preferences.
+
 ## 4) Netlify + API Hosting
 
 Netlify is for frontend static hosting.

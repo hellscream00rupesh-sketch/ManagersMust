@@ -25,7 +25,6 @@
   --success-soft: linear-gradient(120deg, rgba(125, 168, 137, 0.34), rgba(210, 237, 221, 0.56));
   --danger: #9d4a40;
   --danger-soft: linear-gradient(120deg, rgba(223, 151, 136, 0.34), rgba(245, 210, 186, 0.45));
-  --bottom-nav-clearance: 6.25rem;
 }
 
 .page {
@@ -401,7 +400,7 @@ select:focus {
 .dashboard-page {
   display: block;
   padding: 1rem;
-  padding-bottom: calc(var(--bottom-nav-clearance) + env(safe-area-inset-bottom));
+  padding-bottom: calc(1rem + env(safe-area-inset-bottom));
 }
 
 .dashboard-card {
@@ -1326,12 +1325,12 @@ label .ui-icon,
   place-items: center;
   z-index: 300;
   padding: 1rem;
-  padding-bottom: calc(var(--bottom-nav-clearance) + env(safe-area-inset-bottom));
+  padding-bottom: calc(1rem + env(safe-area-inset-bottom));
 }
 
 .modal-card {
   width: min(920px, 100%);
-  max-height: min(calc(100vh - var(--bottom-nav-clearance) - 2rem - env(safe-area-inset-bottom)), 860px);
+  max-height: min(calc(100dvh - 2rem - env(safe-area-inset-bottom)), 860px);
   overflow: auto;
   border: 1px solid var(--line);
   border-radius: 18px;
@@ -1386,13 +1385,45 @@ label .ui-icon,
   background: linear-gradient(180deg, rgba(247, 241, 233, 0.15), rgba(247, 241, 233, 0.96));
 }
 
-.bottom-nav {
+.side-navigation {
   position: fixed;
-  left: 0.7rem;
-  right: 0.7rem;
-  bottom: 0.7rem;
+  left: calc(0.7rem + env(safe-area-inset-left));
+  bottom: calc(0.7rem + env(safe-area-inset-bottom));
+  z-index: 100;
+}
+
+.navigation-toggle {
+  width: 52px;
+  height: 52px;
+  display: grid;
+  place-items: center;
+  padding: 0.6rem;
+  border: 1px solid var(--orange);
+  border-radius: 50%;
+  background: var(--orange);
+  color: #fffdfa;
+  cursor: pointer;
+  box-shadow: 0 4px 18px rgba(90, 64, 36, 0.2);
+}
+
+.navigation-toggle svg {
+  width: 24px;
+  height: 24px;
+  transition: transform 220ms ease;
+}
+
+.side-navigation.open .navigation-toggle svg {
+  transform: rotate(180deg);
+}
+
+.side-navigation-panel {
+  position: fixed;
+  left: calc(0.7rem + env(safe-area-inset-left));
+  right: calc(0.7rem + env(safe-area-inset-right));
+  bottom: calc(52px + 1.4rem + env(safe-area-inset-bottom));
+  max-height: calc(100dvh - 52px - 2.1rem - env(safe-area-inset-bottom));
+  overflow-y: auto;
   margin: 0;
-  width: auto;
   border: 1px solid var(--line);
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.9);
@@ -1400,10 +1431,31 @@ label .ui-icon,
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0.3rem;
   padding: 0.3rem;
-  overflow: hidden;
   backdrop-filter: blur(8px);
   box-shadow: 0 14px 28px -18px rgba(90, 64, 36, 0.4);
-  z-index: 100;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(16px);
+  transition: transform 220ms ease, opacity 220ms ease;
+}
+
+.side-navigation.open .side-navigation-panel {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.navigation-toggle:focus-visible,
+.nav-item:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .navigation-toggle svg,
+  .side-navigation-panel {
+    transition: none;
+  }
 }
 
 .nav-item {
@@ -1447,17 +1499,16 @@ label .ui-icon,
 }
 
 @media (min-width: 780px) {
-  .bottom-nav {
+  .side-navigation-panel {
     left: 50%;
-    bottom: 1rem;
     right: auto;
-    transform: translateX(-50%);
     width: min(860px, calc(100% - 2rem));
+    transform: translate(-50%, 16px);
     box-shadow: 0 18px 35px -26px rgba(90, 64, 36, 0.35);
   }
 
-  .dashboard-card {
-    margin-bottom: 6rem;
+  .side-navigation.open .side-navigation-panel {
+    transform: translate(-50%, 0);
   }
 
   .grid-form {

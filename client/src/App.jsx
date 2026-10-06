@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { buildInventoryCardData } from "./inventoryCardData";
+import SideNavigation from "./SideNavigation";
 import "./App.css";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL;
@@ -3560,43 +3561,12 @@ function App() {
           {renderTab()}
         </section>
 
-        <nav className="bottom-nav" aria-label="Primary navigation">
-          {navItems.map((item) => (
-            <button
-              key={item.key}
-              type="button"
-              className={activeTab === item.key ? "nav-item active" : "nav-item"}
-              onClick={() => onNavigateTab(item.key)}
-            >
-              <span className="icon" aria-hidden="true">
-                {item.key === "account" && (
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                    <circle cx="12" cy="8" r="4" />
-                    <path d="M4 20c1.8-3 4.5-4.5 8-4.5S18.2 17 20 20" />
-                  </svg>
-                )}
-                {item.key === "overview" && (
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M3 13h8V3H3zM13 21h8v-8h-8zM13 3h8v6h-8zM3 21h8v-6H3z" />
-                  </svg>
-                )}
-                {item.key === "posts" && (
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M4 5h16v14H4z" />
-                    <path d="M8 9h8M8 13h8M8 17h5" />
-                  </svg>
-                )}
-                {item.key === "stores" && (
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M4 21V8l8-5 8 5v13z" />
-                    <path d="M9 21v-6h6v6" />
-                  </svg>
-                )}
-              </span>
-              <span>{item.label}</span>
-            </button>
-          ))}
-        </nav>
+        <SideNavigation
+          items={navItems}
+          activeTab={activeTab}
+          onNavigate={onNavigateTab}
+          renderIcon={(key) => <UIIcon name={key} />}
+        />
 
         {editingStoreInventoryItem && canManageWorkspace && (
           <div className="modal-backdrop" role="presentation" onClick={onCancelEditStoreInventory}>
