@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import axios from "axios";
+import { buildInventoryCardData } from "./inventoryCardData";
 import "./App.css";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL;
@@ -2368,72 +2369,72 @@ function App() {
             )}
 
             {!loadingCumulativeInventory && filteredCumulativeInventory.length > 0 && (
-              <div className="table-wrap">
-                <table className="inventory-table">
-                  <thead>
-                    <tr>
-                      <th>Inventory Name</th>
-                      {visibleStoreColumns.map((store) => (
-                        <th key={store.id}>{store.name} #{store.officeNumber}</th>
-                      ))}
-                      <th>Cumulative</th>
-                      <th>Preferred</th>
-                      {canManageWorkspace && <th>Action</th>}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredCumulativeInventory.map((item) => {
-                      const rowKey = buildInventoryParentItemKey(item.inventoryCategory, item.inventoryGroup, item.inventoryName);
-                      const deleteStoreOptions = storeColumns.filter((store) =>
-                        Object.prototype.hasOwnProperty.call(item.countsByStore || {}, String(store.id))
-                      );
-                      const visibleCountTotal = visibleStoreColumns.reduce(
-                        (sum, store) => sum + Number(item.countsByStore?.[String(store.id)] || 0),
-                        0
-                      );
-                      const visiblePreferredTotal = visibleStoreColumns.reduce(
-                        (sum, store) => sum + Number(item.preferredByStore?.[String(store.id)] || 0),
-                        0
-                      );
-                      return (
-                        <tr key={rowKey}>
-                          <td>
-                            <div className="inventory-name-stack">
-                              <span>{item.inventoryName}</span>
-                              <p className="tiny">{formatInventoryCategoryLabel(item.inventoryCategory, item.inventoryGroup)}</p>
-                              {Array.isArray(item.subItems) && item.subItems.length > 0 ? (
-                                <details className="subitem-details">
-                                  <summary>{`Sub-items (${item.subItems.length})`}</summary>
-                                  <p className="tiny">{formatSubItemLabelsList(item.subItems)}</p>
-                                  <p className="tiny">{formatSubItemCountsList(item.subItems, item.subItemCounts)}</p>
-                                </details>
-                              ) : (
-                                <p className="tiny">{formatInventoryItemCategoryLabel(item.inventoryItemCategory, item.subItemNumber, item.subItems)}</p>
-                              )}
-                            </div>
-                          </td>
-                          {visibleStoreColumns.map((store) => {
-                            const count = Number(item.countsByStore?.[String(store.id)] ?? 0);
-                            return <td key={store.id}>{count}</td>;
-                          })}
-                          <td>
-                            {visibleCountTotal}
-                          </td>
-                          <td>
-                            {visiblePreferredTotal}
-                          </td>
-                          {canManageWorkspace && (
-                            <td>
-                              <button type="button" className="action-btn" onClick={() => onStartEditInventory(item)}>
-                                Edit
-                              </button>
-                            </td>
-                          )}
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+              <div className="cumulative-inventory-grid">
+                {filteredCumulativeInventory.map((item) => {
+                  const rowKey = buildInventoryParentItemKey(item.inventoryCategory, item.inventoryGroup, item.inventoryName);
+                  const { entries, total, preferredTotal, canChart, background } =
+                    buildInventoryCardData(item, storeColumns, visibleStoreColumns);
+
+                  return (
+                    <article className="cumulative-inventory-card" key={rowKey} aria-label={item.inventoryName}>
+                      <div className="section-row compact">
+                        <div className="inventory-name-stack">
+                          <h3>{item.inventoryName}</h3>
+                          <p className="tiny">{formatInventoryCategoryLabel(item.inventoryCategory, item.inventoryGroup)}</p>
+                        </div>
+                        {canManageWorkspace && (
+                          <button type="button" className="action-btn" onClick={() => onStartEditInventory(item)}>
+                            Edit
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="inventory-card-chart">
+                        {background ? (
+                          <div
+                            className="inventory-store-pie"
+                            role="img"
+                            aria-label={`Inventory distribution for ${item.inventoryName}: ${entries.map((entry) =>
+                              `${entry.store.name} #${entry.store.officeNumber}: ${entry.count} units (${entry.percent.toFixed(1)}%)`
+                            ).join(", ")}`}
+                            style={{ background }}
+                          />
+                        ) : (
+                          <p className="inventory-pie-empty">
+                            {canChart ? "No stock in selected stores" : "Pie chart unavailable for negative or invalid quantities."}
+                          </p>
+                        )}
+                        <p className="tiny">Quantity by selected store</p>
+                      </div>
+
+                      <ul className="inventory-store-legend" aria-label="Store quantities">
+                        {entries.map(({ store, count, color, percent }) => (
+                          <li key={store.id}>
+                            <span className="legend-dot" style={{ backgroundColor: color }} aria-hidden="true" />
+                            <span className="inventory-store-label">{store.name} #{store.officeNumber}</span>
+                            <strong>{count}</strong>
+                            {canChart && <span className="tiny">{percent.toFixed(1)}%</span>}
+                          </li>
+                        ))}
+                      </ul>
+
+                      <dl className="inventory-card-totals">
+                        <div><dt>Cumulative</dt><dd>{total}</dd></div>
+                        <div><dt>Preferred</dt><dd>{preferredTotal}</dd></div>
+                      </dl>
+
+                      {Array.isArray(item.subItems) && item.subItems.length > 0 ? (
+                        <details className="subitem-details">
+                          <summary>{`Sub-items (${item.subItems.length})`}</summary>
+                          <p className="tiny">{formatSubItemLabelsList(item.subItems)}</p>
+                          <p className="tiny">{formatSubItemCountsList(item.subItems, item.subItemCounts)}</p>
+                        </details>
+                      ) : (
+                        <p className="tiny">{formatInventoryItemCategoryLabel(item.inventoryItemCategory, item.subItemNumber, item.subItems)}</p>
+                      )}
+                    </article>
+                  );
+                })}
               </div>
             )}
           </section>

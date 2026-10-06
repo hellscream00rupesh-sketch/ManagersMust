@@ -55,6 +55,17 @@ Required env in `client/.env`:
 
 - `VITE_API_BASE_URL` (example: `http://localhost:4000`)
 
+### All Inventory
+
+All Inventory uses responsive cards instead of a wide table. Each inventory card
+shows quantities by selected store in a pie chart and a labeled breakdown, plus
+cumulative and preferred totals. Store selection updates the chart and totals;
+category tabs and case-insensitive search filter the cards. Sub-item details and
+manager Edit actions remain available. Zero-stock items show an empty-chart
+message; negative quantities remain visible without a misleading pie chart.
+
+Run the card data checks from `client` with `node --test src/inventoryCardData.test.js`.
+
 ## 4) Netlify + API Hosting
 
 Netlify is for frontend static hosting.

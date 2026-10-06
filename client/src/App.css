@@ -900,6 +900,103 @@ label .ui-icon,
   margin: 0.25rem 0 0.75rem;
 }
 
+.cumulative-inventory-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+  gap: 0.8rem;
+  min-width: 0;
+}
+
+.cumulative-inventory-card {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.9), rgba(245, 237, 226, 0.92));
+  padding: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  overflow-wrap: anywhere;
+}
+
+.cumulative-inventory-card .inventory-name-stack {
+  flex: 1;
+  min-width: 0;
+}
+
+.cumulative-inventory-card h3 {
+  color: var(--text);
+  font-size: 1rem;
+}
+
+.inventory-card-chart {
+  display: grid;
+  justify-items: center;
+  gap: 0.45rem;
+}
+
+.inventory-store-pie,
+.inventory-pie-empty {
+  width: min(150px, 100%);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px rgba(95, 58, 26, 0.16);
+}
+
+.inventory-pie-empty {
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: var(--surface-soft);
+  font-size: 0.8rem;
+  text-align: center;
+}
+
+.inventory-store-legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.inventory-store-legend li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.8rem;
+}
+
+.inventory-store-legend strong {
+  color: var(--text);
+}
+
+.inventory-card-totals {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.45rem;
+  margin: auto 0 0;
+}
+
+.inventory-card-totals > div {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.8);
+  padding: 0.55rem;
+}
+
+.inventory-card-totals dt {
+  font-size: 0.75rem;
+}
+
+.inventory-card-totals dd {
+  margin: 0.2rem 0 0;
+  color: var(--text);
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+
 .overview-kpi-grid {
   display: grid;
   grid-template-columns: repeat(1, minmax(0, 1fr));
