@@ -113,24 +113,22 @@
 .brand-mark {
   width: 3rem;
   height: 3rem;
-  border-radius: 16px;
-  background: var(--brand-gradient);
   display: grid;
   place-items: center;
   color: #fffdf9;
-  box-shadow: 0 16px 28px -18px rgba(95, 64, 33, 0.45);
+  filter: drop-shadow(0 12px 20px rgba(95, 64, 33, 0.38));
   flex-shrink: 0;
 }
 
 .brand-row.compact .brand-mark {
   width: 2.6rem;
   height: 2.6rem;
-  border-radius: 14px;
 }
 
 .brand-mark svg {
-  width: 68%;
-  height: 68%;
+  width: 100%;
+  height: 100%;
+  display: block;
 }
 
 .brand-subtitle {

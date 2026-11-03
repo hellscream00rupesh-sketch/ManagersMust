@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" role="img" aria-label="Manager's Must">
+  <title>Manager's Must</title>
+  <defs>
+    <linearGradient id="mmTile" x1="10" y1="4" x2="54" y2="60" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#d39a57"/>
+      <stop offset="0.52" stop-color="#cf6f5c"/>
+      <stop offset="1" stop-color="#2f807d"/>
+    </linearGradient>
+    <linearGradient id="mmSheen" x1="32" y1="2" x2="32" y2="62" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.22"/>
+      <stop offset="0.45" stop-color="#ffffff" stop-opacity="0"/>
+      <stop offset="1" stop-color="#402c12" stop-opacity="0.14"/>
+    </linearGradient>
+  </defs>
+
+  <!-- app tile -->
+  <rect width="64" height="64" rx="16" fill="url(#mmTile)"/>
+  <rect width="64" height="64" rx="16" fill="url(#mmSheen)"/>
+  <rect x="3.4" y="3.4" width="57.2" height="57.2" rx="13.6" stroke="#ffffff" stroke-opacity="0.28" stroke-width="1.4" fill="none"/>
+
+  <!-- M monogram -->
+  <path d="M15.5 45V22.5L27 37.5 38.5 22.5V45" stroke="#fffdf9" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- "must" check badge -->
+  <circle cx="45.2" cy="43.8" r="9.6" fill="#4a3116"/>
+  <path d="M40.8 44 44.3 47.4 49.9 40.3" stroke="#fffdf9" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

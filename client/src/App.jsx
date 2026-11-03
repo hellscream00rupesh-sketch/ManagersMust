@@ -59,12 +59,25 @@ function UIIcon({ name, className = "" }) {
 function BrandMark({ className = "" }) {
   return (
     <span className={`brand-mark ${className}`.trim()} aria-hidden="true">
-      <svg viewBox="0 0 64 64" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M18 26.5 32 15l14 11.5V47a3 3 0 0 1-3 3H21a3 3 0 0 1-3-3V26.5Z" />
-        <path d="M24 31h16" />
-        <path d="M24 38h10" />
-        <path d="m39 36 2.5 2.5L46 34" />
-        <path d="M28 50V39h8v11" />
+      <svg viewBox="0 0 64 64" fill="none">
+        <defs>
+          <linearGradient id="brandTile" x1="10" y1="4" x2="54" y2="60" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stopColor="#d39a57" />
+            <stop offset="0.52" stopColor="#cf6f5c" />
+            <stop offset="1" stopColor="#2f807d" />
+          </linearGradient>
+          <linearGradient id="brandSheen" x1="32" y1="2" x2="32" y2="62" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stopColor="#ffffff" stopOpacity="0.22" />
+            <stop offset="0.45" stopColor="#ffffff" stopOpacity="0" />
+            <stop offset="1" stopColor="#402c12" stopOpacity="0.14" />
+          </linearGradient>
+        </defs>
+        <rect x="1.5" y="1.5" width="61" height="61" rx="15.5" fill="url(#brandTile)" />
+        <rect x="1.5" y="1.5" width="61" height="61" rx="15.5" fill="url(#brandSheen)" />
+        <rect x="4" y="4" width="56" height="56" rx="13.2" stroke="#ffffff" strokeOpacity="0.28" strokeWidth="1.4" fill="none" />
+        <path d="M16.5 45.5V22.8L27.6 37.5 38.7 22.8V45.5" stroke="#fffdf9" strokeWidth="5.8" strokeLinecap="round" strokeLinejoin="round" />
+        <circle cx="45" cy="43.8" r="9.4" fill="#4a3116" />
+        <path d="M40.7 44 44.2 47.3 49.7 40.4" stroke="#fffdf9" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
     </span>
   );
