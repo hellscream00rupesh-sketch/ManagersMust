@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { buildInventoryCardData } from "./inventoryCardData";
 import SideNavigation from "./SideNavigation";
+import CommissionCenter from "./CommissionCenter";
 import "./App.css";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL;
@@ -12,6 +13,7 @@ const navItems = [
   { key: "overview", label: "Overview" },
   { key: "posts", label: "Posts" },
   { key: "stores", label: "Stores / Offices" },
+  { key: "commission", label: "Commission", managerOnly: true },
   { key: "account", label: "Account" }
 ];
 
@@ -20,6 +22,7 @@ const iconPaths = {
   posts: ["M4 5h16v14H4z", "M8 9h8", "M8 13h8", "M8 17h5"],
   stores: ["M4 21V8l8-5 8 5v13z", "M9 21v-6h6v6"],
   account: ["M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8z", "M4 20c1.8-3 4.5-4.5 8-4.5s6.2 1.5 8 4.5"],
+  commission: ["M12 2v20", "M17 6.5c-.8-1.5-2.6-2.5-5-2.5-2.8 0-5 1.6-5 4s2.2 3.5 5 4 5 1.6 5 4-2.2 4-5 4c-2.4 0-4.2-1-5-2.5"],
   plus: ["M12 5v14", "M5 12h14"],
   search: ["m21 21-4.3-4.3", "M11 18a7 7 0 1 1 0-14 7 7 0 0 1 0 14z"],
   chart: ["M4 19h16", "M7 15l3-3 3 2 4-6"],
@@ -3529,6 +3532,9 @@ function App() {
     if (activeTab === "posts") {
       return renderPosts();
     }
+    if (activeTab === "commission" && isManager) {
+      return <CommissionCenter api={api} currentUser={currentUser} />;
+    }
     return renderBasicTab("Overview");
   };
 
@@ -3562,7 +3568,7 @@ function App() {
         </section>
 
         <SideNavigation
-          items={navItems}
+          items={navItems.filter((item) => !item.managerOnly || isManager)}
           activeTab={activeTab}
           onNavigate={onNavigateTab}
           renderIcon={(key) => <UIIcon name={key} />}

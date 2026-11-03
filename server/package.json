@@ -14,7 +14,8 @@
     "migrate:sub-items": "node scripts/migrate-sub-items.js",
     "migrate:sub-item-table": "node scripts/migrate-sub-item-table.js",
     "migrate:post-sub-item-counts": "node scripts/migrate-post-sub-item-counts.js",
-    "migrate:current-sub-item-counts": "node scripts/migrate-current-sub-item-counts.js"
+    "migrate:current-sub-item-counts": "node scripts/migrate-current-sub-item-counts.js",
+    "migrate:commission": "node scripts/migrate-commission.js"
   },
   "keywords": [],
   "author": "",
@@ -24,8 +25,11 @@
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
+    "exceljs": "^4.4.0",
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.3",
+    "jszip": "^3.10.2",
+    "multer": "^2.5.0",
     "mysql2": "^3.23.1"
   }
 }

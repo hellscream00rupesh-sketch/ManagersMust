@@ -5,6 +5,7 @@ const cors = require("cors");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const pool = require("./db");
+const { registerCommissionRoutes } = require("./commission/routes");
 
 const app = express();
 const port = Number(process.env.PORT || 4000);
@@ -1684,6 +1685,8 @@ app.patch("/api/stores/:storeId/inventory/:itemId", requireAuth, requireElevated
     return res.status(500).json({ message: "Could not update inventory item.", detail: error.message });
   }
 });
+
+registerCommissionRoutes(app, { pool, requireAuth, requireManager });
 
 app.listen(port, () => {
   console.log(`Auth API listening on port ${port}`);

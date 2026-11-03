@@ -66,6 +66,39 @@ message; negative quantities remain visible without a misleading pie chart.
 
 Run the card data checks from `client` with `node --test src/inventoryCardData.test.js`.
 
+### Commission Center (Manager only)
+
+The Commission tab (visible only to users with the `Manager` role) calculates
+monthly pay for all advocates from two manually uploaded Excel files:
+
+1. **Sales By Product report** - the monthly report downloaded from
+   abo.cricketwireless.com (Reports > System Reports > Sales > Sales by
+   Product Report).
+2. **Metrics Advocate export** - KPI percentages per advocate.
+
+Setup:
+
+```bash
+cd server
+npm run migrate:commission     # creates the commission tables
+```
+
+Calculation rules (all editable in the in-app Settings panel):
+
+- Box commission per day/store: commissionable ACT = activations - Cricket
+  Gateway (CHI) units; paid $10/box when the store's daily ACT goal is met,
+  otherwise $5. Upgrades pay $4/$2 against the store's UPG goal.
+- Accessory commission: 8% of accessory revenue.
+- KPI bonus: 5 KPIs (gross adds % >= 60, autopay >= 35, protect >= 40,
+  accessory rev/opportunity >= 35, add-a-line % >= 30) x a per-store-tier rate,
+  with optional per-advocate overrides.
+- HI commission: $20 per Cricket Gateway sold.
+- Manual adjustments (refunds etc.) per advocate per month.
+
+Advocates are matched across files by employee ID (ATTUID). Results can be
+exported as an `AdvocateCommission_YYYY-MM.xlsx` workbook with a summary sheet
+and per-advocate daily breakdowns.
+
 ### Section navigation
 
 Dashboard navigation is hidden by default. Use the circular primary-orange,
