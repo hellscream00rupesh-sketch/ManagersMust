@@ -16,7 +16,7 @@ function normalizeMonth(value) {
   return MONTH_PATTERN.test(month) ? month : null;
 }
 
-function registerCommissionRoutes(app, { pool, requireAuth, requireManager }) {
+function registerCommissionRoutes(app, { pool, requireAuth, requireCommissionAccess, resolveManagerScopeId }) {
   // ---------- helpers ----------
 
   async function loadSettings(managerId) {
@@ -229,7 +229,13 @@ function registerCommissionRoutes(app, { pool, requireAuth, requireManager }) {
     }
   }
 
-  const guard = [requireAuth, requireManager];
+  const guard = [requireAuth, requireCommissionAccess];
+
+  // "Active Manager" accounts work inside their manager's commission workspace;
+  // Managers own their own. Falls back to the account id when no resolver is given.
+  function commissionManagerId(req) {
+    return resolveManagerScopeId ? resolveManagerScopeId(req.auth) : commissionManagerId(req);
+  }
 
   // ---------- overview ----------
 
@@ -240,7 +246,7 @@ function registerCommissionRoutes(app, { pool, requireAuth, requireManager }) {
     }
 
     try {
-      const managerId = req.auth.userId;
+      const managerId = commissionManagerId(req);
       const [settings, storeConfigs, advocates, adjustments, salesDataset, metricsDataset, run] =
         await Promise.all([
           loadSettings(managerId),
@@ -319,7 +325,7 @@ function registerCommissionRoutes(app, { pool, requireAuth, requireManager }) {
            accessory_pct = VALUES(accessory_pct), hi_rate = VALUES(hi_rate),
            default_kpi_rate = VALUES(default_kpi_rate), kpi_thresholds = VALUES(kpi_thresholds)`,
         [
-          req.auth.userId,
+          commissionManagerId(req),
           settings.actRateMet,
           settings.actRateUnmet,
           settings.upgRateMet,
@@ -357,10 +363,10 @@ function registerCommissionRoutes(app, { pool, requireAuth, requireManager }) {
            VALUES (?, ?, ?, ?, ?, ?)
            ON DUPLICATE KEY UPDATE tier = VALUES(tier), act_goal = VALUES(act_goal),
              upg_goal = VALUES(upg_goal), kpi_rate = VALUES(kpi_rate)`,
-          [req.auth.userId, storeCode, tier, actGoal, upgGoal, kpiRate]
+          [commissionManagerId(req), storeCode, tier, actGoal, upgGoal, kpiRate]
         );
       }
-      const storeConfigs = await loadStoreConfigs(req.auth.userId);
+      const storeConfigs = await loadStoreConfigs(commissionManagerId(req));
       return res.json({ message: "Store tiers saved.", storeConfigs: Object.values(storeConfigs) });
     } catch (error) {
       return res.status(500).json({ message: "Could not save store tiers.", detail: error.message });
@@ -405,12 +411,12 @@ function registerCommissionRoutes(app, { pool, requireAuth, requireManager }) {
     try {
       const [result] = await pool.query(
         `UPDATE commission_advocates SET ${updates.join(", ")} WHERE manager_id = ? AND employee_id = ?`,
-        [...params, req.auth.userId, employeeId]
+        [...params, commissionManagerId(req), employeeId]
       );
       if (result.affectedRows === 0) {
         return res.status(404).json({ message: "Advocate not found." });
       }
-      const advocates = await loadAdvocates(req.auth.userId);
+      const advocates = await loadAdvocates(commissionManagerId(req));
       return res.json({ message: "Advocate updated.", advocates: Object.values(advocates) });
     } catch (error) {
       return res.status(500).json({ message: "Could not update advocate.", detail: error.message });
@@ -431,14 +437,14 @@ function registerCommissionRoutes(app, { pool, requireAuth, requireManager }) {
       if (amount === 0 && !note) {
         await pool.query(
           "DELETE FROM commission_adjustments WHERE manager_id = ? AND month = ? AND employee_id = ?",
-          [req.auth.userId, month, employeeId]
+          [commissionManagerId(req), month, employeeId]
         );
       } else {
         await pool.query(
           `INSERT INTO commission_adjustments (manager_id, month, employee_id, amount, note)
            VALUES (?, ?, ?, ?, ?)
            ON DUPLICATE KEY UPDATE amount = VALUES(amount), note = VALUES(note)`,
-          [req.auth.userId, month, employeeId, amount, note]
+          [commissionManagerId(req), month, employeeId, amount, note]
         );
       }
       return res.json({ message: "Adjustment saved. Re-run the commission to apply it." });
@@ -464,7 +470,7 @@ function registerCommissionRoutes(app, { pool, requireAuth, requireManager }) {
     }
 
     try {
-      const managerId = req.auth.userId;
+      const managerId = commissionManagerId(req);
       if (kind === "sales") {
         const parsed = await parseSalesReport(req.file.buffer);
         if (parsed.month && parsed.month !== requestedMonth) {
@@ -502,7 +508,7 @@ function registerCommissionRoutes(app, { pool, requireAuth, requireManager }) {
     try {
       await pool.query(
         "DELETE FROM commission_datasets WHERE manager_id = ? AND month = ? AND kind = ?",
-        [req.auth.userId, month, kind]
+        [commissionManagerId(req), month, kind]
       );
       return res.json({ message: "Dataset removed." });
     } catch (error) {
@@ -519,7 +525,7 @@ function registerCommissionRoutes(app, { pool, requireAuth, requireManager }) {
     }
 
     try {
-      const managerId = req.auth.userId;
+      const managerId = commissionManagerId(req);
       const [salesDataset, metricsDataset, advocates, storeConfigs] = await Promise.all([
         loadDataset(managerId, month, "sales"),
         loadDataset(managerId, month, "metrics"),
@@ -653,8 +659,8 @@ function registerCommissionRoutes(app, { pool, requireAuth, requireManager }) {
     }
 
     try {
-      await seedAdvocates(req.auth.userId, month);
-      const run = await runCommission(req.auth.userId, month);
+      await seedAdvocates(commissionManagerId(req), month);
+      const run = await runCommission(commissionManagerId(req), month);
       return res.json({ message: "Commission calculated.", run });
     } catch (error) {
       return res.status(400).json({ message: error.message });
@@ -668,7 +674,7 @@ function registerCommissionRoutes(app, { pool, requireAuth, requireManager }) {
     }
 
     try {
-      const run = await loadRun(req.auth.userId, month);
+      const run = await loadRun(commissionManagerId(req), month);
       if (!run) {
         return res.status(404).json({ message: "Run the commission for this month before exporting." });
       }

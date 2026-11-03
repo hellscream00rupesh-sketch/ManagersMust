@@ -13,7 +13,7 @@ const navItems = [
   { key: "overview", label: "Overview" },
   { key: "posts", label: "Posts" },
   { key: "stores", label: "Stores / Offices" },
-  { key: "commission", label: "Commission", managerOnly: true },
+  { key: "commission", label: "Commission", elevatedOnly: true },
   { key: "account", label: "Account" }
 ];
 
@@ -3545,7 +3545,7 @@ function App() {
     if (activeTab === "posts") {
       return renderPosts();
     }
-    if (activeTab === "commission" && isManager) {
+    if (activeTab === "commission" && canManageWorkspace) {
       return <CommissionCenter api={api} currentUser={currentUser} />;
     }
     return renderBasicTab("Overview");
@@ -3581,7 +3581,7 @@ function App() {
         </section>
 
         <SideNavigation
-          items={navItems.filter((item) => !item.managerOnly || isManager)}
+          items={navItems.filter((item) => !item.elevatedOnly || canManageWorkspace)}
           activeTab={activeTab}
           onNavigate={onNavigateTab}
           renderIcon={(key) => <UIIcon name={key} />}

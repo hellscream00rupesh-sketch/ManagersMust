@@ -416,6 +416,26 @@ function requireElevatedAccess(req, res, next) {
   return next();
 }
 
+function requireCommissionAccess(req, res, next) {
+  if (!elevatedRoles.has(req.auth.role)) {
+    return res.status(403).json({ message: "Manager or Active Manager access required." });
+  }
+
+  if (req.auth.role !== "Manager" && !req.auth.managerId) {
+    return res.status(403).json({ message: "This account is not linked to a manager yet." });
+  }
+
+  return next();
+}
+
+function getCommissionManagerScopeId(user) {
+  if (user.role === "Manager") {
+    return user.userId;
+  }
+
+  return user.managerId || null;
+}
+
 async function getStoreForUser(user, storeId) {
   const [rows] = await pool.query(
     "SELECT id, manager_id, name, office_number AS officeNumber, phone, address FROM stores WHERE id = ?",
@@ -1686,7 +1706,12 @@ app.patch("/api/stores/:storeId/inventory/:itemId", requireAuth, requireElevated
   }
 });
 
-registerCommissionRoutes(app, { pool, requireAuth, requireManager });
+registerCommissionRoutes(app, {
+  pool,
+  requireAuth,
+  requireCommissionAccess,
+  resolveManagerScopeId: getCommissionManagerScopeId
+});
 
 app.listen(port, () => {
   console.log(`Auth API listening on port ${port}`);
