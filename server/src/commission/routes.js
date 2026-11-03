@@ -622,7 +622,42 @@ function registerCommissionRoutes(app, { pool, requireAuth, requireCommissionAcc
           add("Store goals configured", "warn", `Default goals will be used for store(s): ${unconfigured.join(", ")}. Review them in Settings.`);
         }
 
-        // 5. Basic data sanity.
+        // 5. Accessory revenue should line up with the official metrics file.
+        //    A sales number above the metrics number usually means accessory
+        //    returns/refunds failed to net out of the sales file.
+        const accessoryMismatch = { over: [], under: [] };
+        Object.entries(metricAdvocates).forEach(([employeeId, metric]) => {
+          const salesEntry = employees[employeeId];
+          if (!salesEntry || metric.accessoryRevenue === null) {
+            return;
+          }
+
+          const diff = Math.round(((salesEntry.accessoryRevenue || 0) - metric.accessoryRevenue) * 100) / 100;
+          if (Math.abs(diff) <= 5) {
+            return;
+          }
+
+          const label = `${salesEntry.name || employeeId} (${diff > 0 ? "+" : "-"}$${Math.abs(diff).toFixed(2)})`;
+          if (diff > 0) {
+            accessoryMismatch.over.push(label);
+          } else {
+            accessoryMismatch.under.push(label);
+          }
+        });
+        if (accessoryMismatch.over.length === 0 && accessoryMismatch.under.length === 0) {
+          add("Accessory returns netted", "pass", "Sales-file accessory revenue matches the official metrics within $5 for every advocate.");
+        } else {
+          const parts = [];
+          if (accessoryMismatch.over.length > 0) {
+            parts.push(`higher than official (check accessory returns): ${accessoryMismatch.over.join(", ")}`);
+          }
+          if (accessoryMismatch.under.length > 0) {
+            parts.push(`lower than official (sales file may exclude accessory sales outside the downloaded stores): ${accessoryMismatch.under.join(", ")}`);
+          }
+          add("Accessory returns netted", "warn", parts.join("; ") + ".");
+        }
+
+        // 6. Basic data sanity.
         const totalBoxes = Object.values(employees).reduce((sum, employee) => sum + (Number(employee.boxes) || 0), 0);
         const negativeAccessory = Object.values(employees).filter((employee) => Number(employee.accessoryRevenue) < 0);
         if (totalBoxes <= 0) {
