@@ -220,7 +220,21 @@ function computeCommission({ salesEmployees, metricsAdvocates, settings, storeCo
     const kpiBonus = round2(kpisHit * kpiRate);
 
     // ---- HI commission ----
-    const hiQty = salesEntry?.hiQty ?? 0;
+    // Pay on the official metrics figures, matching ATT's payable result:
+    // Gross Adds (activated units) first, then Orders. The sales-file gateway
+    // device count is only a fallback for advocates missing from the metrics
+    // export - a device receipt alone (moved/install-pending) is not payable.
+    let hiQty = salesEntry ? salesEntry.hiQty || 0 : 0;
+    let hiSource = "sales-devices";
+    if (metricEntry) {
+      if (metricEntry.homeInternetGrossAdds !== null && metricEntry.homeInternetGrossAdds !== undefined) {
+        hiQty = metricEntry.homeInternetGrossAdds;
+        hiSource = "official-gross-adds";
+      } else if (metricEntry.homeInternetOrders !== null && metricEntry.homeInternetOrders !== undefined) {
+        hiQty = metricEntry.homeInternetOrders;
+        hiSource = "official-orders";
+      }
+    }
     const hiCommission = round2(hiQty * merged.hiRate);
 
     // ---- Adjustments & total ----
@@ -251,6 +265,7 @@ function computeCommission({ salesEmployees, metricsAdvocates, settings, storeCo
       kpiBonus,
       kpiDetails,
       hiQty,
+      hiSource,
       hiCommission,
       adjustment: adjustmentAmount,
       adjustmentNote: adjustment?.note || null,

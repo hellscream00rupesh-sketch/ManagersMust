@@ -661,40 +661,58 @@ function registerCommissionRoutes(app, { pool, requireAuth, requireCommissionAcc
           );
         }
 
-        // 6. Home Internet counts should line up per advocate across both files.
-        const hiMismatch = [];
-        Object.entries(employees).forEach(([employeeId, salesEntry]) => {
+        // 6. Home Internet: payout uses official Home Internet units (Gross Adds,
+        //    falling back to Orders). This check surfaces only the informational
+        //    drift between gateway devices moved in the sales file and the
+        //    official payable units.
+        const hiDrift = { over: [], under: [] };
+        const hiIds = new Set([...Object.keys(employees), ...Object.keys(metricAdvocates)]);
+        hiIds.forEach((employeeId) => {
+          const salesEntry = employees[employeeId];
           const metric = metricAdvocates[employeeId];
-          const metricHi = metric && metric.homeInternetOrders !== null ? metric.homeInternetOrders : null;
-          if ((salesEntry.hiQty || 0) > 0 && metricHi === null) {
-            hiMismatch.push(
-              `${salesEntry.name || employeeId} (gateway devices in sales: ${salesEntry.hiQty}, official home internet orders: none)`
-            );
+          const devices = (salesEntry && salesEntry.hiQty) || 0;
+
+          let officialUnits = null;
+          if (metric) {
+            if (metric.homeInternetGrossAdds !== null && metric.homeInternetGrossAdds !== undefined) {
+              officialUnits = metric.homeInternetGrossAdds;
+            } else if (metric.homeInternetOrders !== null && metric.homeInternetOrders !== undefined) {
+              officialUnits = metric.homeInternetOrders;
+            }
           }
-        });
-        Object.entries(metricAdvocates).forEach(([employeeId, metric]) => {
-          if (metric.homeInternetOrders === null) {
+
+          if (officialUnits === null) {
+            if (devices > 0) {
+              hiDrift.under.push(
+                `${(salesEntry && salesEntry.name) || employeeId} (${devices} device(s) moved, official units: not reported)`
+              );
+            }
             return;
           }
-          const salesEntry = employees[employeeId];
-          const salesHi = salesEntry ? salesEntry.hiQty || 0 : 0;
-          if (metric.homeInternetOrders !== salesHi) {
-            hiMismatch.push(
-              `${(salesEntry && salesEntry.name) || metric.name || employeeId} (gateway devices in sales: ${salesHi}, official home internet orders: ${metric.homeInternetOrders})`
-            );
+
+          const diff = devices - officialUnits;
+          if (diff === 0) {
+            return;
+          }
+
+          const label = `${(salesEntry && salesEntry.name) || (metric && metric.name) || employeeId} (${devices} device(s) moved, ${officialUnits} official payable unit(s))`;
+          if (diff > 0) {
+            hiDrift.over.push(label);
+          } else {
+            hiDrift.under.push(label);
           }
         });
-        if (hiMismatch.length === 0) {
+        if (hiDrift.over.length === 0 && hiDrift.under.length === 0) {
           add(
             "Home Internet counts aligned",
             "pass",
-            "Gateway device counts in the sales file match the official Home Internet orders for every advocate."
+            "Gateway devices moved match the official Home Internet units for every advocate. Payout uses the official figure."
           );
         } else {
           add(
             "Home Internet counts aligned",
             "warn",
-            `Gateway device attribution/count differs from official orders: ${hiMismatch.join("; ")}.`
+            `Payout uses official Home Internet units, so this does not change any commission. Device drift (informational): ${[...hiDrift.over, ...hiDrift.under].join("; ")}.`
           );
         }
 
