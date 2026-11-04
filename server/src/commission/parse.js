@@ -260,7 +260,9 @@ function buildHeaderIndex(rowArray) {
 
 const ACT_PRODUCT_TYPES = new Set(["NEWACTIVATION", "ADDALINE"]);
 const UPG_PRODUCT_TYPES = new Set(["UPGRADE"]);
-const HI_PRODUCT_PATTERN = /cricket\s+gateway/i;
+// Home Internet devices: any provider modem/gateway. Drill-in is done by the
+// validation check, which compares counted devices with official HI orders.
+const HI_PRODUCT_PATTERN = /gateway/i;
 
 async function parseSalesReport(buffer) {
   const rows = await getSheetRows(buffer, ["Report_Output"]);

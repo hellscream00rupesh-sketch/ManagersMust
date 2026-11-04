@@ -623,8 +623,8 @@ function registerCommissionRoutes(app, { pool, requireAuth, requireCommissionAcc
         }
 
         // 5. Accessory revenue should line up with the official metrics file.
-        //    A sales number above the metrics number usually means accessory
-        //    returns/refunds failed to net out of the sales file.
+        //    The payout uses the official Accessory Revenue figure (netted of
+        //    returns at every location); this check surfaces any sales-file drift.
         const accessoryMismatch = { over: [], under: [] };
         Object.entries(metricAdvocates).forEach(([employeeId, metric]) => {
           const salesEntry = employees[employeeId];
@@ -645,16 +645,20 @@ function registerCommissionRoutes(app, { pool, requireAuth, requireCommissionAcc
           }
         });
         if (accessoryMismatch.over.length === 0 && accessoryMismatch.under.length === 0) {
-          add("Accessory returns netted", "pass", "Sales-file accessory revenue matches the official metrics within $5 for every advocate.");
+          add("Accessory returns netted", "pass", "Sales-file accessory revenue matches the official metrics within $5 for every advocate. Payout uses the official figure.");
         } else {
           const parts = [];
           if (accessoryMismatch.over.length > 0) {
-            parts.push(`higher than official (check accessory returns): ${accessoryMismatch.over.join(", ")}`);
+            parts.push(`sales file higher than official for: ${accessoryMismatch.over.join(", ")}`);
           }
           if (accessoryMismatch.under.length > 0) {
-            parts.push(`lower than official (sales file may exclude accessory sales outside the downloaded stores): ${accessoryMismatch.under.join(", ")}`);
+            parts.push(`sales file lower than official for: ${accessoryMismatch.under.join(", ")}`);
           }
-          add("Accessory returns netted", "warn", parts.join("; ") + ".");
+          add(
+            "Accessory returns netted",
+            "warn",
+            parts.join("; ") + ". Payout is computed from the official Accessory Revenue figure, so this does not change any commission."
+          );
         }
 
         // 6. Home Internet counts should line up per advocate across both files.

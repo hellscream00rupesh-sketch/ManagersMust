@@ -171,9 +171,14 @@ function computeCommission({ salesEmployees, metricsAdvocates, settings, storeCo
       tiersUsed.size === 0 ? "N/A" : tiersUsed.size === 1 ? `Tier ${[...tiersUsed][0]}` : "Mixed Tiers";
 
     // ---- Accessory commission ----
-    const accessoryRevenue = round2(
-      salesEntry?.accessoryRevenue ?? metricEntry?.accessoryRevenue ?? 0
-    );
+    // Prefer the official metrics figure: it is ATT's system-of-record Accessory
+    // Revenue, already netted of returns and covering every location. The sales
+    // file is only a fallback for advocates missing from the metrics export.
+    const accessoryRevenueSource =
+      metricEntry && metricEntry.accessoryRevenue !== null && metricEntry.accessoryRevenue !== undefined
+        ? metricEntry.accessoryRevenue
+        : salesEntry?.accessoryRevenue ?? 0;
+    const accessoryRevenue = round2(accessoryRevenueSource);
     const accessoryCommission = round2(accessoryRevenue * merged.accessoryPct);
 
     // ---- KPI bonus ----
