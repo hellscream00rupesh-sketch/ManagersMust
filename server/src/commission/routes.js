@@ -657,7 +657,44 @@ function registerCommissionRoutes(app, { pool, requireAuth, requireCommissionAcc
           add("Accessory returns netted", "warn", parts.join("; ") + ".");
         }
 
-        // 6. Basic data sanity.
+        // 6. Home Internet counts should line up per advocate across both files.
+        const hiMismatch = [];
+        Object.entries(employees).forEach(([employeeId, salesEntry]) => {
+          const metric = metricAdvocates[employeeId];
+          const metricHi = metric && metric.homeInternetOrders !== null ? metric.homeInternetOrders : null;
+          if ((salesEntry.hiQty || 0) > 0 && metricHi === null) {
+            hiMismatch.push(
+              `${salesEntry.name || employeeId} (gateway devices in sales: ${salesEntry.hiQty}, official home internet orders: none)`
+            );
+          }
+        });
+        Object.entries(metricAdvocates).forEach(([employeeId, metric]) => {
+          if (metric.homeInternetOrders === null) {
+            return;
+          }
+          const salesEntry = employees[employeeId];
+          const salesHi = salesEntry ? salesEntry.hiQty || 0 : 0;
+          if (metric.homeInternetOrders !== salesHi) {
+            hiMismatch.push(
+              `${(salesEntry && salesEntry.name) || metric.name || employeeId} (gateway devices in sales: ${salesHi}, official home internet orders: ${metric.homeInternetOrders})`
+            );
+          }
+        });
+        if (hiMismatch.length === 0) {
+          add(
+            "Home Internet counts aligned",
+            "pass",
+            "Gateway device counts in the sales file match the official Home Internet orders for every advocate."
+          );
+        } else {
+          add(
+            "Home Internet counts aligned",
+            "warn",
+            `Gateway device attribution/count differs from official orders: ${hiMismatch.join("; ")}.`
+          );
+        }
+
+        // 7. Basic data sanity.
         const totalBoxes = Object.values(employees).reduce((sum, employee) => sum + (Number(employee.boxes) || 0), 0);
         const negativeAccessory = Object.values(employees).filter((employee) => Number(employee.accessoryRevenue) < 0);
         if (totalBoxes <= 0) {
